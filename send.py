@@ -282,6 +282,66 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
     return updated_reminders
 
 
+def get_next_reminder_time(reminders: List[Dict[str, Any]]) -> Optional[datetime]:
+    """
+    Get the earliest next_run_at time from pending reminders.
+
+    Args:
+        reminders: List of all reminders
+
+    Returns:
+        Datetime of next reminder, or None if no pending reminders.
+    """
+    next_time = None
+    for reminder in reminders:
+        if reminder.get("status") != "pending":
+            continue
+        next_run_at_str = reminder.get("next_run_at")
+        if not next_run_at_str:
+            continue
+        try:
+            next_run_at = datetime.fromisoformat(next_run_at_str)
+            if next_time is None or next_run_at < next_time:
+                next_time = next_run_at
+        except ValueError:
+            continue
+    return next_time
+
+
+def calculate_sleep_duration(reminders: List[Dict[str, Any]]) -> float:
+    """
+    Calculate optimal sleep duration based on next reminder.
+
+    Strategy:
+    - No reminders or next reminder > 30s away: sleep 30s (reduce load)
+    - Next reminder < 30s away: sleep until that time (increase precision)
+
+    Args:
+        reminders: List of all reminders
+
+    Returns:
+        Sleep duration in seconds.
+    """
+    next_reminder = get_next_reminder_time(reminders)
+
+    if next_reminder is None:
+        # No pending reminders, use default interval
+        return 30.0
+
+    now = get_current_time()
+    time_until_next = (next_reminder - now).total_seconds()
+
+    if time_until_next <= 0:
+        # Reminder is due now, check immediately
+        return 0.5
+    elif time_until_next < 30:
+        # Reminder is soon, sleep until then (with small buffer)
+        return max(0.5, time_until_next)
+    else:
+        # Reminder is far away, use default interval
+        return 30.0
+
+
 def run_scheduler_cycle() -> None:
     """
     Run one cycle of the scheduler.
@@ -307,21 +367,28 @@ def run_scheduler_cycle() -> None:
 # ============================================================================
 
 def main():
-    """Main scheduler loop."""
+    """Main scheduler loop with adaptive sleep."""
     print("Starting Reminder Bot scheduler daemon")
-    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE} | Interval: 30s")
+    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE} | Adaptive interval: max 30s")
 
     while True:
         try:
             run_scheduler_cycle()
+
+            # Load reminders to calculate optimal sleep duration
+            reminders = load_reminders_from_file()
+            sleep_duration = calculate_sleep_duration(reminders)
+
+            # Sleep with adaptive duration
+            time.sleep(sleep_duration)
+
         except KeyboardInterrupt:
             print("\nScheduler stopped")
             break
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
-
-        # Sleep for 30 seconds before next cycle
-        time.sleep(30)
+            # Fallback to default interval on error
+            time.sleep(30)
 
 
 if __name__ == "__main__":
