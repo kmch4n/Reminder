@@ -131,3 +131,6 @@ data/reminders.json
 data/*.json
 *.log
 .DS_Store
+
+# tester
+test.py

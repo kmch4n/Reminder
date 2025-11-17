@@ -1,0 +1,11 @@
+# Web framework
+Flask==3.0.0
+
+# LINE Messaging API SDK
+line-bot-sdk==3.10.0
+
+# Environment variable management
+python-dotenv==1.0.0
+
+# HTTP client (for send.py)
+requests==2.31.0
