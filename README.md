@@ -83,9 +83,25 @@ For production, consider running `send.py` as a systemd service or via cron.
 
 Users can send messages to the LINE bot in the following formats:
 
-- **One-time reminder**: `/once 2025-11-20 21:00 レポートをやる`
-- **Weekly reminder**: `/weekly 月曜 09:00 ゴミ出し`
-- **Monthly reminder**: `/monthly 2 21:00 家賃の支払い`
+**One-time reminder**:
+```
+/once YYYY-MM-DD HH:MM message
+```
+Example: `/once 2025-11-20 21:00 レポート提出`
+
+**Weekly reminder**:
+```
+/weekly 曜日 HH:MM message
+```
+Supported weekdays: 月曜/月, 火曜/火, 水曜/水, 木曜/木, 金曜/金, 土曜/土, 日曜/日, or English (Monday/mon, Tuesday/tue, etc.)
+
+Example: `/weekly 月曜 09:00 ゴミ出し`
+
+**Monthly reminder**:
+```
+/monthly DD HH:MM message
+```
+Example: `/monthly 1 20:00 家賃支払い`
 
 *Note: Natural language parsing support is planned for future releases.*
 
