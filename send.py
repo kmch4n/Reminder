@@ -40,10 +40,10 @@ TZ = ZoneInfo(TIMEZONE)
 # LINE API endpoint
 LINE_PUSH_MESSAGE_URL = "https://api.line.me/v2/bot/message/push"
 
-# Setup logging
+# Setup logging (minimal output)
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.WARNING,
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,9 @@ def send_line_push_message(user_id: str, text: str) -> bool:
     try:
         response = requests.post(LINE_PUSH_MESSAGE_URL, headers=headers, json=payload)
         response.raise_for_status()
-        logger.info(f"Sent push message to user {user_id}")
         return True
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error sending push message to {user_id}: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"Response body: {e.response.text}")
+        logger.error(f"Failed to send push message: {e}")
         return False
 
 
@@ -263,8 +260,6 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
             success = send_line_push_message(user_id, message)
 
             if success:
-                logger.info(f"Processed reminder {reminder.get('id')}")
-
                 # Update reminder based on schedule type
                 schedule = reminder.get("schedule", {})
                 schedule_type = schedule.get("type")
@@ -272,19 +267,15 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
                 if schedule_type == "once":
                     # Mark as done
                     reminder["status"] = "done"
-                    logger.info(f"Marked one-time reminder {reminder.get('id')} as done")
                 else:
                     # Calculate next run time
                     next_run = calculate_next_run_at(schedule, next_run_at)
                     if next_run:
                         reminder["next_run_at"] = next_run
-                        logger.info(f"Updated recurring reminder {reminder.get('id')} next run to {next_run}")
                     else:
                         # Couldn't calculate next run, mark as done
                         reminder["status"] = "done"
-                        logger.warning(f"Couldn't calculate next run for reminder {reminder.get('id')}, marking as done")
-            else:
-                logger.error(f"Failed to send notification for reminder {reminder.get('id')}")
+                        logger.warning(f"Couldn't calculate next run for reminder {reminder.get('id')}")
 
         updated_reminders.append(reminder)
 
@@ -297,19 +288,15 @@ def run_scheduler_cycle() -> None:
 
     Loads reminders, processes due ones, and saves updates.
     """
-    logger.info("Running scheduler cycle")
-
     try:
         # Load reminders
         reminders = load_reminders_from_file()
-        logger.info(f"Loaded {len(reminders)} reminders")
 
         # Process due reminders
         updated_reminders = process_due_reminders(reminders)
 
         # Save updated reminders
         save_reminders_to_file(updated_reminders)
-        logger.info("Scheduler cycle completed")
 
     except Exception as e:
         logger.error(f"Error in scheduler cycle: {e}", exc_info=True)
@@ -321,19 +308,17 @@ def run_scheduler_cycle() -> None:
 
 def main():
     """Main scheduler loop."""
-    logger.info("Starting Reminder Bot scheduler daemon")
-    logger.info(f"Data directory: {DATA_DIR}")
-    logger.info(f"Timezone: {TIMEZONE}")
-    logger.info("Checking for reminders every 30 seconds...")
+    print("Starting Reminder Bot scheduler daemon")
+    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE} | Interval: 30s")
 
     while True:
         try:
             run_scheduler_cycle()
         except KeyboardInterrupt:
-            logger.info("Scheduler stopped by user")
+            print("\nScheduler stopped")
             break
         except Exception as e:
-            logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+            logger.error(f"Unexpected error: {e}", exc_info=True)
 
         # Sleep for 30 seconds before next cycle
         time.sleep(30)

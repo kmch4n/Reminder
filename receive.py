@@ -751,6 +751,11 @@ def health_check():
 
 
 if __name__ == "__main__":
+    # Suppress Flask's default request logging
+    import logging as flask_logging
+    flask_log = flask_logging.getLogger('werkzeug')
+    flask_log.setLevel(flask_logging.ERROR)
+
     print("Starting Reminder Bot webhook server...")
     print(f"Public URL: https://linebot.kmchan.jp/reminder/callback")
     print(f"Data: {DATA_DIR} | TZ: {TIMEZONE}")
