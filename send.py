@@ -57,6 +57,11 @@ def get_reminders_file_path() -> Path:
     return Path(DATA_DIR) / 'reminders.json'
 
 
+def get_archive_file_path() -> Path:
+    """Get the path to the archive JSON file."""
+    return Path(DATA_DIR) / 'archive.json'
+
+
 def load_reminders_from_file() -> List[Dict[str, Any]]:
     """
     Load all reminders from JSON file.
@@ -93,6 +98,69 @@ def save_reminders_to_file(reminders: List[Dict[str, Any]]) -> None:
     except IOError as e:
         logger.error(f"Error saving reminders: {e}")
         raise
+
+
+def load_archive_from_file() -> List[Dict[str, Any]]:
+    """
+    Load archived reminders from JSON file.
+
+    Returns:
+        List of archived reminder dictionaries.
+    """
+    file_path = get_archive_file_path()
+
+    if not file_path.exists():
+        return []
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Error loading archive: {e}")
+        return []
+
+
+def save_archive_to_file(archive: List[Dict[str, Any]]) -> None:
+    """
+    Save archived reminders to JSON file.
+
+    Args:
+        archive: List of archived reminder dictionaries to save.
+    """
+    file_path = get_archive_file_path()
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(archive, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        logger.error(f"Error saving archive: {e}")
+        raise
+
+
+def append_to_archive(completed_reminders: List[Dict[str, Any]]) -> None:
+    """
+    Append completed reminders to the archive file.
+
+    Args:
+        completed_reminders: List of completed reminder dictionaries to archive.
+    """
+    if not completed_reminders:
+        return
+
+    # Load existing archive
+    archive = load_archive_from_file()
+
+    # Add timestamp for when it was archived
+    current_time = get_current_time()
+    for reminder in completed_reminders:
+        reminder["archived_at"] = current_time.isoformat()
+
+    # Append new completed reminders
+    archive.extend(completed_reminders)
+
+    # Save updated archive
+    save_archive_to_file(archive)
 
 
 # ============================================================================
@@ -221,14 +289,17 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
     """
     Process all due reminders and send notifications.
 
+    Completed reminders are moved to archive.json.
+
     Args:
         reminders: List of all reminders
 
     Returns:
-        Updated list of reminders.
+        Updated list of active reminders (excluding completed ones).
     """
     current_time = get_current_time()
     updated_reminders = []
+    completed_reminders = []
 
     for reminder in reminders:
         # Skip if not pending
@@ -265,19 +336,30 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
                 schedule_type = schedule.get("type")
 
                 if schedule_type == "once":
-                    # Mark as done
+                    # Mark as done and move to archive
                     reminder["status"] = "done"
+                    completed_reminders.append(reminder)
                 else:
                     # Calculate next run time
                     next_run = calculate_next_run_at(schedule, next_run_at)
                     if next_run:
                         reminder["next_run_at"] = next_run
+                        updated_reminders.append(reminder)
                     else:
-                        # Couldn't calculate next run, mark as done
+                        # Couldn't calculate next run, mark as done and archive
                         reminder["status"] = "done"
+                        completed_reminders.append(reminder)
                         logger.warning(f"Couldn't calculate next run for reminder {reminder.get('id')}")
+            else:
+                # Failed to send, keep for retry
+                updated_reminders.append(reminder)
+        else:
+            # Not due yet, keep it
+            updated_reminders.append(reminder)
 
-        updated_reminders.append(reminder)
+    # Move completed reminders to archive
+    if completed_reminders:
+        append_to_archive(completed_reminders)
 
     return updated_reminders
 
