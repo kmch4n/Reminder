@@ -58,8 +58,11 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 TZ = ZoneInfo(TIMEZONE)
 
 # Session storage (in-memory, lost on restart)
-# Structure: {user_id: {"state": "waiting_for_time", "message": "text"}}
+# Structure: {user_id: {"state": "waiting_for_time", "message": "text", "fail_count": 0}}
 user_sessions: Dict[str, Dict[str, Any]] = {}
+
+# Maximum number of failed attempts before clearing session
+MAX_FAIL_COUNT = 5
 
 
 # ============================================================================
@@ -417,7 +420,60 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
-    # Pattern 11: YYYY-MM-DD HH:MM (structured format with time)
+    # Pattern 11: YYYY年M月D日 (20XX年5月3日) → デフォルト9:00
+    match = re.match(r'(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?$', text)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+
+        # Block dates more than 5 years in the future
+        max_year = now.year + 5
+        if year > max_year:
+            return None
+
+        try:
+            target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+            schedule = {
+                "type": "once",
+                "run_at": target_time.isoformat()
+            }
+            desc = target_time.strftime("%Y年%m月%d日 09:00")
+            return (schedule, desc)
+        except ValueError:
+            return None
+
+    # Pattern 12: YYYY年M月D日 時刻付き (2025年5月3日 14:00)
+    match = re.match(r'(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s+(.+)', text)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        time_part = match.group(4)
+
+        # Block dates more than 5 years in the future
+        max_year = now.year + 5
+        if year > max_year:
+            return None
+
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+
+        try:
+            target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+            schedule = {
+                "type": "once",
+                "run_at": target_time.isoformat()
+            }
+            desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+            return (schedule, desc)
+        except ValueError:
+            return None
+
+    # Pattern 13: YYYY-MM-DD HH:MM (structured format with time)
     match = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})', text)
     if match:
         year = int(match.group(1))
@@ -425,6 +481,11 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         day = int(match.group(3))
         hour = int(match.group(4))
         minute = int(match.group(5))
+
+        # Block dates more than 5 years in the future
+        max_year = now.year + 5
+        if year > max_year:
+            return None
 
         try:
             target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
@@ -550,8 +611,17 @@ def start_waiting_for_time_session(user_id: str, message: str) -> None:
     """Start a session waiting for time input."""
     user_sessions[user_id] = {
         "state": "waiting_for_time",
-        "message": message
+        "message": message,
+        "fail_count": 0
     }
+
+
+def increment_fail_count(user_id: str) -> int:
+    """Increment and return the fail count for a user session."""
+    if user_id in user_sessions:
+        user_sessions[user_id]["fail_count"] = user_sessions[user_id].get("fail_count", 0) + 1
+        return user_sessions[user_id]["fail_count"]
+    return 0
 
 
 def get_user_session(user_id: str) -> Optional[Dict[str, Any]]:
@@ -577,12 +647,11 @@ def callback():
         abort(400)
 
     body = request.get_data(as_text=True)
-    app.logger.info(f"Request body: {body}")
 
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        app.logger.error("Invalid signature. Check your channel secret.")
+        app.logger.error("Invalid signature")
         abort(400)
 
     return 'OK'
@@ -600,54 +669,61 @@ def handle_text_message(event: MessageEvent):
     received_text = event.message.text.strip()
     user_id = event.source.user_id
 
-    app.logger.info(f"Received message from {user_id}: {received_text}")
-
     # Check if user has an active session
     session = get_user_session(user_id)
 
     if session and session.get("state") == "waiting_for_time":
-        # User is sending time information
-        reminder_message = session.get("message")
-
-        # Try to parse the time
-        parse_result = parse_natural_time(received_text)
-
-        if parse_result is not None:
-            schedule, time_desc = parse_result
-
-            # Create reminder
-            reminder = create_reminder_object(user_id, reminder_message, schedule)
-
-            try:
-                add_reminder_to_file(reminder)
-
-                reply_text = (
-                    f"✅ リマインダーを追加しました。\n\n"
-                    f"時刻: {time_desc}\n"
-                    f"内容: 「{reminder_message}」"
-                )
-
-                app.logger.info(f"Created reminder {reminder['id']} for user {user_id}")
-            except Exception as e:
-                app.logger.error(f"Error saving reminder: {e}")
-                reply_text = "❌ リマインダーの登録に失敗しました"
-
-            # Clear session
+        # Check for cancel command
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
             clear_user_session(user_id)
+            reply_text = "リマインダーの登録をキャンセルしました。"
         else:
-            # Failed to parse time
-            reply_text = (
-                "⚠️ 時刻の形式を認識できませんでした。\n\n"
-                "以下の形式で送信してください:\n"
-                "• 22:00 / 14時 / 午後3時\n"
-                "• 今日の22:00 / 今日23:59\n"
-                "• 明日の9時 / 明日午後3時\n"
-                "• 明後日の午前9時\n"
-                "• 来週火曜日の21時\n"
-                "• 毎週日曜日 20時\n"
-                "• 毎月1日 20時\n"
-                "• 2025-11-20 / 11/20 (9:00で設定)"
-            )
+            # User is sending time information
+            reminder_message = session.get("message")
+
+            # Try to parse the time
+            parse_result = parse_natural_time(received_text)
+
+            if parse_result is not None:
+                schedule, time_desc = parse_result
+
+                # Create reminder
+                reminder = create_reminder_object(user_id, reminder_message, schedule)
+
+                try:
+                    add_reminder_to_file(reminder)
+
+                    reply_text = (
+                        f"✅ リマインダーを追加しました。\n\n"
+                        f"時刻: {time_desc}\n"
+                        f"内容: 「{reminder_message}」"
+                    )
+                except Exception as e:
+                    app.logger.error(f"Error saving reminder: {e}")
+                    reply_text = "❌ リマインダーの登録に失敗しました"
+
+                # Clear session
+                clear_user_session(user_id)
+            else:
+                # Failed to parse time
+                fail_count = increment_fail_count(user_id)
+
+                if fail_count >= MAX_FAIL_COUNT:
+                    clear_user_session(user_id)
+                    reply_text = (
+                        f"⚠️ {MAX_FAIL_COUNT}回失敗したため、リマインダーの登録を中止しました。\n"
+                        "最初からやり直してください。"
+                    )
+                else:
+                    reply_text = (
+                        f"⚠️ 時刻の形式を認識できませんでした。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                        "以下の形式で送信してください:\n"
+                        "• 22:00 / 14時 / 午後3時\n"
+                        "• 今日の22:00 / 明日午後3時\n"
+                        "• 毎週日曜日 20時\n"
+                        "• 2025年5月3日 / 11/20\n\n"
+                        "登録をやめる場合は「キャンセル」と送信してください。"
+                    )
 
     else:
         # User is sending a new reminder message
@@ -656,8 +732,6 @@ def handle_text_message(event: MessageEvent):
         start_waiting_for_time_session(user_id, received_text)
 
         reply_text = f"「{received_text}」ですね。\n次に、いつ送信してほしいかを送信して下さい。"
-
-        app.logger.info(f"Started session for user {user_id}, waiting for time")
 
     # Send reply message
     with ApiClient(configuration) as api_client:
@@ -678,9 +752,6 @@ def health_check():
 
 if __name__ == "__main__":
     print("Starting Reminder Bot webhook server...")
-    print(f"Webhook endpoint: http://localhost:8000/reminder/callback")
-    print(f"Health check: http://localhost:8000/reminder/health")
     print(f"Public URL: https://linebot.kmchan.jp/reminder/callback")
-    print(f"Data directory: {DATA_DIR}")
-    print(f"Timezone: {TIMEZONE}")
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE}")
+    app.run(host="0.0.0.0", port=8000, debug=False)
