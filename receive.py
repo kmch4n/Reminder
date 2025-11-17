@@ -23,7 +23,10 @@ from linebot.v3.messaging import (
     ApiClient,
     MessagingApi,
     ReplyMessageRequest,
-    TextMessage
+    TextMessage,
+    QuickReply,
+    QuickReplyItem,
+    MessageAction
 )
 from linebot.v3.webhooks import (
     MessageEvent,
@@ -153,6 +156,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     - 今日の22:00, 今日23:59
     - 明日の9:00, 明日午後3時
     - 明後日の午前9時
+    - 10分後, 2時間後, 3日後
     - 来週火曜日の21時
     - 毎週日曜日 20時
     - 毎月1日 20時
@@ -195,6 +199,80 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             return (hour, minute)
 
         return None
+
+    # Pattern 0a: N分後 (relative minutes)
+    match = re.match(r'(\d+)分後', text)
+    if match:
+        minutes = int(match.group(1))
+        if minutes <= 0 or minutes > 1440:  # Max 24 hours
+            return None
+
+        target_time = now + timedelta(minutes=minutes)
+
+        schedule = {
+            "type": "once",
+            "run_at": target_time.isoformat()
+        }
+        desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+        return (schedule, desc)
+
+    # Pattern 0b: N時間後 (relative hours)
+    match = re.match(r'(\d+)時間後', text)
+    if match:
+        hours = int(match.group(1))
+        if hours <= 0 or hours > 168:  # Max 7 days
+            return None
+
+        target_time = now + timedelta(hours=hours)
+
+        schedule = {
+            "type": "once",
+            "run_at": target_time.isoformat()
+        }
+        desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+        return (schedule, desc)
+
+    # Pattern 0c: N日後 HH:MM (relative days with time)
+    match = re.match(r'(\d+)日後\s+(.+)', text)
+    if match:
+        days = int(match.group(1))
+        time_part = match.group(2)
+
+        if days <= 0 or days > 365:
+            return None
+
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+        target_time = now + timedelta(days=days)
+        target_time = target_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        schedule = {
+            "type": "once",
+            "run_at": target_time.isoformat()
+        }
+        desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+        return (schedule, desc)
+
+    # Pattern 0d: N日後 (relative days, default 9:00)
+    match = re.match(r'(\d+)日後$', text)
+    if match:
+        days = int(match.group(1))
+
+        if days <= 0 or days > 365:
+            return None
+
+        target_time = now + timedelta(days=days)
+        target_time = target_time.replace(hour=9, minute=0, second=0, microsecond=0)
+
+        schedule = {
+            "type": "once",
+            "run_at": target_time.isoformat()
+        }
+        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        return (schedule, desc)
 
     # Pattern 1: 毎週 曜日 時刻 (recurring weekly)
     match = re.match(r'毎週\s*([月火水木金土日]曜?日?)\s*(.+)', text)
@@ -434,6 +512,11 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         try:
             target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+
+            # Check if time is in the past
+            if is_past_time(target_time):
+                return None
+
             schedule = {
                 "type": "once",
                 "run_at": target_time.isoformat()
@@ -464,6 +547,11 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         try:
             target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+            # Check if time is in the past
+            if is_past_time(target_time):
+                return None
+
             schedule = {
                 "type": "once",
                 "run_at": target_time.isoformat()
@@ -489,6 +577,11 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         try:
             target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+            # Check if time is in the past
+            if is_past_time(target_time):
+                return None
+
             schedule = {
                 "type": "once",
                 "run_at": target_time.isoformat()
@@ -499,6 +592,38 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             return None
 
     return None
+
+
+def is_past_time(target_time: datetime) -> bool:
+    """
+    Check if the target time is in the past.
+
+    Args:
+        target_time: Target datetime to check
+
+    Returns:
+        True if target time is in the past, False otherwise.
+    """
+    now = get_current_time()
+    return target_time < now
+
+
+def create_time_quick_reply() -> QuickReply:
+    """
+    Create quick reply buttons for time selection.
+
+    Returns:
+        QuickReply object with time selection options.
+    """
+    return QuickReply(items=[
+        QuickReplyItem(action=MessageAction(label="10分後", text="10分後")),
+        QuickReplyItem(action=MessageAction(label="30分後", text="30分後")),
+        QuickReplyItem(action=MessageAction(label="1時間後", text="1時間後")),
+        QuickReplyItem(action=MessageAction(label="明日9時", text="明日 9時")),
+        QuickReplyItem(action=MessageAction(label="明日20時", text="明日 20時")),
+        QuickReplyItem(action=MessageAction(label="毎週月曜20時", text="毎週月曜 20時")),
+        QuickReplyItem(action=MessageAction(label="キャンセル", text="キャンセル"))
+    ])
 
 
 def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:
@@ -672,6 +797,8 @@ def handle_text_message(event: MessageEvent):
     # Check if user has an active session
     session = get_user_session(user_id)
 
+    quick_reply = None  # Will be set if we need quick reply buttons
+
     if session and session.get("state") == "waiting_for_time":
         # Check for cancel command
         if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
@@ -705,7 +832,7 @@ def handle_text_message(event: MessageEvent):
                 # Clear session
                 clear_user_session(user_id)
             else:
-                # Failed to parse time
+                # Failed to parse time (could be invalid format or past time)
                 fail_count = increment_fail_count(user_id)
 
                 if fail_count >= MAX_FAIL_COUNT:
@@ -717,13 +844,16 @@ def handle_text_message(event: MessageEvent):
                 else:
                     reply_text = (
                         f"⚠️ 時刻の形式を認識できませんでした。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                        "指定された時刻が既に過ぎている可能性があります。\n\n"
                         "以下の形式で送信してください:\n"
+                        "• 10分後 / 2時間後\n"
                         "• 22:00 / 14時 / 午後3時\n"
                         "• 今日の22:00 / 明日午後3時\n"
                         "• 毎週日曜日 20時\n"
                         "• 2025年5月3日 / 11/20\n\n"
                         "登録をやめる場合は「キャンセル」と送信してください。"
                     )
+                    quick_reply = create_time_quick_reply()
 
     else:
         # User is sending a new reminder message
@@ -732,6 +862,7 @@ def handle_text_message(event: MessageEvent):
         start_waiting_for_time_session(user_id, received_text)
 
         reply_text = f"「{received_text}」ですね。\n次に、いつ送信してほしいかを送信して下さい。"
+        quick_reply = create_time_quick_reply()
 
     # Send reply message
     with ApiClient(configuration) as api_client:
@@ -739,7 +870,7 @@ def handle_text_message(event: MessageEvent):
         line_bot_api.reply_message(
             ReplyMessageRequest(
                 reply_token=event.reply_token,
-                messages=[TextMessage(text=reply_text)]
+                messages=[TextMessage(text=reply_text, quick_reply=quick_reply)]
             )
         )
 
