@@ -21,14 +21,17 @@ import requests
 # Load environment variables
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
-    print("Warning: python-dotenv not installed. Make sure environment variables are set.")
+    print(
+        "Warning: python-dotenv not installed. Make sure environment variables are set."
+    )
 
 # Configuration
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
-DATA_DIR = os.getenv('REMINDKUN_DATA_DIR', './data')
-TIMEZONE = os.getenv('REMINDKUN_TIMEZONE', 'Asia/Tokyo')
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+DATA_DIR = os.getenv("REMINDKUN_DATA_DIR", "./data")
+TIMEZONE = os.getenv("REMINDKUN_TIMEZONE", "Asia/Tokyo")
 
 if not LINE_CHANNEL_ACCESS_TOKEN:
     print("Error: LINE_CHANNEL_ACCESS_TOKEN must be set")
@@ -46,8 +49,7 @@ EXECUTION_GRACE_PERIOD = 60
 
 # Setup logging (minimal output)
 logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -56,14 +58,15 @@ logger = logging.getLogger(__name__)
 # JSON Storage Functions
 # ============================================================================
 
+
 def get_reminders_file_path() -> Path:
     """Get the path to the reminders JSON file."""
-    return Path(DATA_DIR) / 'reminders.json'
+    return Path(DATA_DIR) / "reminders.json"
 
 
 def get_archive_file_path() -> Path:
     """Get the path to the archive JSON file."""
-    return Path(DATA_DIR) / 'archive.json'
+    return Path(DATA_DIR) / "archive.json"
 
 
 def load_reminders_from_file() -> List[Dict[str, Any]]:
@@ -79,7 +82,7 @@ def load_reminders_from_file() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
         logger.error(f"Error loading reminders: {e}")
@@ -97,7 +100,7 @@ def save_reminders_to_file(reminders: List[Dict[str, Any]]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(reminders, f, ensure_ascii=False, indent=2)
     except IOError as e:
         logger.error(f"Error saving reminders: {e}")
@@ -117,7 +120,7 @@ def load_archive_from_file() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
         logger.error(f"Error loading archive: {e}")
@@ -135,7 +138,7 @@ def save_archive_to_file(archive: List[Dict[str, Any]]) -> None:
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(archive, f, ensure_ascii=False, indent=2)
     except IOError as e:
         logger.error(f"Error saving archive: {e}")
@@ -171,6 +174,7 @@ def append_to_archive(completed_reminders: List[Dict[str, Any]]) -> None:
 # LINE Messaging API Functions
 # ============================================================================
 
+
 def send_line_push_message(user_id: str, text: str) -> bool:
     """
     Send a push message to a LINE user.
@@ -183,19 +187,11 @@ def send_line_push_message(user_id: str, text: str) -> bool:
         True if successful, False otherwise.
     """
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
     }
 
-    payload = {
-        'to': user_id,
-        'messages': [
-            {
-                'type': 'text',
-                'text': text
-            }
-        ]
-    }
+    payload = {"to": user_id, "messages": [{"type": "text", "text": text}]}
 
     try:
         response = requests.post(LINE_PUSH_MESSAGE_URL, headers=headers, json=payload)
@@ -210,12 +206,15 @@ def send_line_push_message(user_id: str, text: str) -> bool:
 # Time Calculation Functions
 # ============================================================================
 
+
 def get_current_time() -> datetime:
     """Get current time in configured timezone."""
     return datetime.now(TZ)
 
 
-def calculate_next_run_at(schedule: Dict[str, Any], current_run: datetime) -> Optional[str]:
+def calculate_next_run_at(
+    schedule: Dict[str, Any], current_run: datetime
+) -> Optional[str]:
     """
     Calculate the next run time for a recurring reminder.
 
@@ -244,8 +243,9 @@ def calculate_next_run_at(schedule: Dict[str, Any], current_run: datetime) -> Op
 
         # Calculate next week's occurrence
         next_run = current_run + timedelta(days=7)
-        next_run = next_run.replace(hour=target_time.hour, minute=target_time.minute,
-                                     second=0, microsecond=0)
+        next_run = next_run.replace(
+            hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0
+        )
 
         return next_run.isoformat()
 
@@ -267,18 +267,34 @@ def calculate_next_run_at(schedule: Dict[str, Any], current_run: datetime) -> Op
 
         # Try to set the day
         try:
-            next_run = next_run.replace(day=day, hour=target_time.hour,
-                                        minute=target_time.minute, second=0, microsecond=0)
+            next_run = next_run.replace(
+                day=day,
+                hour=target_time.hour,
+                minute=target_time.minute,
+                second=0,
+                microsecond=0,
+            )
         except ValueError:
             # Day doesn't exist in this month, skip to next month
             if next_run.month == 12:
-                next_run = next_run.replace(year=next_run.year + 1, month=1, day=day,
-                                            hour=target_time.hour, minute=target_time.minute,
-                                            second=0, microsecond=0)
+                next_run = next_run.replace(
+                    year=next_run.year + 1,
+                    month=1,
+                    day=day,
+                    hour=target_time.hour,
+                    minute=target_time.minute,
+                    second=0,
+                    microsecond=0,
+                )
             else:
-                next_run = next_run.replace(month=next_run.month + 1, day=day,
-                                            hour=target_time.hour, minute=target_time.minute,
-                                            second=0, microsecond=0)
+                next_run = next_run.replace(
+                    month=next_run.month + 1,
+                    day=day,
+                    hour=target_time.hour,
+                    minute=target_time.minute,
+                    second=0,
+                    microsecond=0,
+                )
 
         return next_run.isoformat()
 
@@ -288,6 +304,7 @@ def calculate_next_run_at(schedule: Dict[str, Any], current_run: datetime) -> Op
 # ============================================================================
 # Reminder Processing Functions
 # ============================================================================
+
 
 def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -320,7 +337,9 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
         try:
             next_run_at = datetime.fromisoformat(next_run_at_str)
         except ValueError as e:
-            logger.error(f"Invalid next_run_at format for reminder {reminder.get('id')}: {e}")
+            logger.error(
+                f"Invalid next_run_at format for reminder {reminder.get('id')}: {e}"
+            )
             updated_reminders.append(reminder)
             continue
 
@@ -333,7 +352,9 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
             if time_diff > EXECUTION_GRACE_PERIOD:
                 reminder["status"] = "done"
                 completed_reminders.append(reminder)
-                logger.warning(f"Reminder {reminder.get('id')} is {int(time_diff)}s overdue, archiving without execution")
+                logger.warning(
+                    f"Reminder {reminder.get('id')} is {int(time_diff)}s overdue, archiving without execution"
+                )
                 continue
 
             # Send notification (only if within grace period)
@@ -363,7 +384,9 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
                         # Couldn't calculate next run, mark as done and archive
                         reminder["status"] = "done"
                         completed_reminders.append(reminder)
-                        logger.warning(f"Couldn't calculate next run for reminder {reminder.get('id')}")
+                        logger.warning(
+                            f"Couldn't calculate next run for reminder {reminder.get('id')}"
+                        )
             else:
                 # Failed to send, keep for retry
                 updated_reminders.append(reminder)
@@ -461,6 +484,7 @@ def run_scheduler_cycle() -> None:
 # ============================================================================
 # Main Loop
 # ============================================================================
+
 
 def main():
     """Main scheduler loop with adaptive sleep."""
