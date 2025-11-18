@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any
 from zoneinfo import ZoneInfo
 
+from linebot.v3.messaging import QuickReply, QuickReplyItem, MessageAction
+
 # Configuration
 TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
 
