@@ -1,0 +1,28 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000100",
+    "user_id": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "text": "会議の準備をする",
+    "schedule": {
+      "type": "once",
+      "run_at": "2025-11-18T10:00:00+09:00"
+    },
+    "next_run_at": "2025-11-18T10:00:00+09:00",
+    "created_at": "2025-11-17T18:00:00+09:00",
+    "status": "done",
+    "archived_at": "2025-11-18T10:00:15+09:00"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000101",
+    "user_id": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "text": "買い物に行く",
+    "schedule": {
+      "type": "once",
+      "run_at": "2025-11-17T15:00:00+09:00"
+    },
+    "next_run_at": "2025-11-17T15:00:00+09:00",
+    "created_at": "2025-11-17T12:00:00+09:00",
+    "status": "done",
+    "archived_at": "2025-11-17T15:00:10+09:00"
+  }
+]

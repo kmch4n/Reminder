@@ -128,7 +128,7 @@ CLAUDE.md
 
 # Project-specific
 data/reminders.json
-data/*.json
+data/archive.json
 *.log
 .DS_Store
 
