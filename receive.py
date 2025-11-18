@@ -207,6 +207,6 @@ if __name__ == "__main__":
     flask_log.setLevel(flask_logging.ERROR)
 
     print("Starting Reminder Bot webhook server...")
-    print(f"Public URL: https://linebot.kmchan.jp/reminder/callback")
+    print(f"Public URL: {PUBLIC_URL}")
     print(f"Data: {DATA_DIR} | TZ: {TIMEZONE}")
     app.run(host="0.0.0.0", port=8000, debug=False)
