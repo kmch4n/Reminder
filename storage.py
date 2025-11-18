@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 # Configuration
-DATA_DIR = os.getenv("REMINDKUN_DATA_DIR", "./data")
+DATA_DIR = os.getenv("REMINDER_DATA_DIR", "./data")
 
 # Setup logging
 logger = logging.getLogger(__name__)

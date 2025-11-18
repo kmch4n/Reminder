@@ -9,7 +9,7 @@ from typing import Optional, Tuple, Dict, Any
 from zoneinfo import ZoneInfo
 
 # Configuration
-TIMEZONE = os.getenv("REMINDKUN_TIMEZONE", "Asia/Tokyo")
+TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
 
 # Timezone object
 TZ = ZoneInfo(TIMEZONE)

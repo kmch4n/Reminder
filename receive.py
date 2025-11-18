@@ -45,8 +45,9 @@ except ImportError:
 # Configuration
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-DATA_DIR = os.getenv("REMINDKUN_DATA_DIR", "./data")
-TIMEZONE = os.getenv("REMINDKUN_TIMEZONE", "Asia/Tokyo")
+DATA_DIR = os.getenv("REMINDER_DATA_DIR", "./data")
+TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
+PUBLIC_URL = os.getenv("REMINDER_PUBLIC_URL", "https://your-domain.com/reminder/callback")
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     print("Error: LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET must be set")

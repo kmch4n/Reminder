@@ -30,8 +30,8 @@ except ImportError:
 
 # Configuration
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-DATA_DIR = os.getenv("REMINDKUN_DATA_DIR", "./data")
-TIMEZONE = os.getenv("REMINDKUN_TIMEZONE", "Asia/Tokyo")
+DATA_DIR = os.getenv("REMINDER_DATA_DIR", "./data")
+TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
 
 if not LINE_CHANNEL_ACCESS_TOKEN:
     print("Error: LINE_CHANNEL_ACCESS_TOKEN must be set")
