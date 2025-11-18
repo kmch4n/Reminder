@@ -22,7 +22,11 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 # Import local modules
 from storage import add_reminder_to_file
-from time_parser import parse_natural_time, create_time_quick_reply
+from time_parser import (
+    parse_natural_time,
+    create_time_quick_reply,
+    create_main_menu_quick_reply,
+)
 from session import (
     get_user_session,
     clear_user_session,
@@ -99,6 +103,7 @@ def handle_text_message(event: MessageEvent):
     # Check for reminder list command
     if received_text == "リマインド一覧":
         reply_text = format_reminder_list(user_id)
+        quick_reply = create_main_menu_quick_reply()
 
         # Send reply message
         with ApiClient(configuration) as api_client:
@@ -106,7 +111,7 @@ def handle_text_message(event: MessageEvent):
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text)],
+                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
                 )
             )
         return
@@ -121,6 +126,7 @@ def handle_text_message(event: MessageEvent):
         if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
             clear_user_session(user_id)
             reply_text = "リマインダーの登録をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
         else:
             # User is sending time information
             reminder_message = session.get("message")
@@ -138,13 +144,15 @@ def handle_text_message(event: MessageEvent):
                     add_reminder_to_file(reminder)
 
                     reply_text = (
-                        f"✅ リマインダーを追加しました。\n\n"
+                        f"✅ リマインダーを登録しました。\n\n"
                         f"時刻: {time_desc}\n"
                         f"内容: 「{reminder_message}」"
                     )
+                    quick_reply = create_main_menu_quick_reply()
                 except Exception as e:
                     app.logger.error(f"Error saving reminder: {e}")
-                    reply_text = "❌ リマインダーの登録に失敗しました"
+                    reply_text = "❌ リマインダーの登録に失敗しました。"
+                    quick_reply = create_main_menu_quick_reply()
 
                 # Clear session
                 clear_user_session(user_id)
@@ -158,6 +166,7 @@ def handle_text_message(event: MessageEvent):
                         f"⚠️ {MAX_FAIL_COUNT}回失敗したため、リマインダーの登録を中止しました。\n"
                         "最初からやり直してください。"
                     )
+                    quick_reply = create_main_menu_quick_reply()
                 else:
                     reply_text = (
                         f"⚠️ 時刻の形式を認識できませんでした。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
@@ -173,15 +182,24 @@ def handle_text_message(event: MessageEvent):
                     quick_reply = create_time_quick_reply()
 
     else:
-        # User is sending a new reminder message
-        # Start a new session and ask for time
+        # Check for reminder setup command
+        if received_text == "リマインド設定":
+            reply_text = (
+                "リマインダーの内容を入力してください。\n\n"
+                "例:\n"
+                "• お金の振り込み\n"
+                "• エントリーシートを送る\n"
+                "• 課題を提出する"
+            )
+            quick_reply = create_main_menu_quick_reply()
+        else:
+            # User is sending a new reminder message
+            # Start a new session and ask for time
 
-        start_waiting_for_time_session(user_id, received_text)
+            start_waiting_for_time_session(user_id, received_text)
 
-        reply_text = (
-            f"「{received_text}」ですね。\n次に、いつ送信してほしいかを送信して下さい。"
-        )
-        quick_reply = create_time_quick_reply()
+            reply_text = f"「{received_text}」\n\nいつ通知しますか？"
+            quick_reply = create_time_quick_reply()
 
     # Send reply message
     with ApiClient(configuration) as api_client:

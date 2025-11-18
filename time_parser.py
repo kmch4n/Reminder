@@ -514,6 +514,25 @@ def create_time_quick_reply() -> QuickReply:
     )
 
 
+def create_main_menu_quick_reply() -> QuickReply:
+    """
+    Create quick reply buttons for main menu.
+
+    Returns:
+        QuickReply object with main menu options.
+    """
+    return QuickReply(
+        items=[
+            QuickReplyItem(
+                action=MessageAction(label="リマインド設定", text="リマインド設定")
+            ),
+            QuickReplyItem(
+                action=MessageAction(label="リマインド一覧", text="リマインド一覧")
+            ),
+        ]
+    )
+
+
 def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:
     """
     Calculate the first run time for a reminder based on its schedule.
