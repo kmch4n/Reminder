@@ -761,6 +761,59 @@ def clear_user_session(user_id: str) -> None:
 
 
 # ============================================================================
+# Reminder List Display
+# ============================================================================
+
+def format_reminder_list(user_id: str) -> str:
+    """
+    Format and return user's reminder list.
+
+    Args:
+        user_id: LINE user ID
+
+    Returns:
+        Formatted reminder list text.
+    """
+    reminders = load_reminders_from_file()
+    user_reminders = [r for r in reminders if r.get("user_id") == user_id and r.get("status") == "pending"]
+
+    if not user_reminders:
+        return "📋 登録されているリマインダーはありません。"
+
+    # Sort by next_run_at
+    user_reminders.sort(key=lambda r: r.get("next_run_at", ""))
+
+    lines = ["📋 リマインダー一覧\n"]
+
+    for i, reminder in enumerate(user_reminders, 1):
+        text = reminder.get("text", "")
+        next_run_at_str = reminder.get("next_run_at", "")
+        schedule = reminder.get("schedule", {})
+        schedule_type = schedule.get("type", "")
+
+        # Format datetime
+        try:
+            from datetime import datetime
+            next_run_at = datetime.fromisoformat(next_run_at_str)
+            time_str = next_run_at.strftime("%m/%d %H:%M")
+        except (ValueError, AttributeError):
+            time_str = "不明"
+
+        # Add schedule type indicator
+        if schedule_type == "weekly":
+            type_indicator = "🔁 毎週"
+        elif schedule_type == "monthly":
+            type_indicator = "🔁 毎月"
+        else:
+            type_indicator = "📅"
+
+        lines.append(f"{i}. {type_indicator} {time_str}")
+        lines.append(f"   {text}\n")
+
+    return "\n".join(lines)
+
+
+# ============================================================================
 # LINE Webhook Handler
 # ============================================================================
 
@@ -793,6 +846,21 @@ def handle_text_message(event: MessageEvent):
     """
     received_text = event.message.text.strip()
     user_id = event.source.user_id
+
+    # Check for reminder list command
+    if received_text == "リマインド一覧":
+        reply_text = format_reminder_list(user_id)
+
+        # Send reply message
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_text)]
+                )
+            )
+        return
 
     # Check if user has an active session
     session = get_user_session(user_id)
