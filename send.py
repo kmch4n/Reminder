@@ -40,6 +40,10 @@ TZ = ZoneInfo(TIMEZONE)
 # LINE API endpoint
 LINE_PUSH_MESSAGE_URL = "https://api.line.me/v2/bot/message/push"
 
+# Execution grace period (seconds)
+# Reminders older than this will be archived without execution
+EXECUTION_GRACE_PERIOD = 60
+
 # Setup logging (minimal output)
 logging.basicConfig(
     level=logging.WARNING,
@@ -322,7 +326,17 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
 
         # Check if due
         if next_run_at <= current_time:
-            # Send notification
+            # Calculate how long overdue this reminder is
+            time_diff = (current_time - next_run_at).total_seconds()
+
+            # If reminder is too old, archive it without executing
+            if time_diff > EXECUTION_GRACE_PERIOD:
+                reminder["status"] = "done"
+                completed_reminders.append(reminder)
+                logger.warning(f"Reminder {reminder.get('id')} is {int(time_diff)}s overdue, archiving without execution")
+                continue
+
+            # Send notification (only if within grace period)
             user_id = reminder.get("user_id")
             text = reminder.get("text", "リマインダー")
 
