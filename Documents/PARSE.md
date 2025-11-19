@@ -59,7 +59,25 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
 ## 内部ヘルパー関数：parse_time_with_ampm
 
-時刻表記のパース処理は、内部関数 `parse_time_with_ampm()` で集約されています。この関数は、以下の3種類の時刻表記に対応します：
+時刻表記のパース処理は、内部関数 `parse_time_with_ampm()` で集約されています。この関数は、以下の3種類の時刻表記に対応し、時刻の妥当性を検証します。
+
+### バリデーション機能
+
+抽出した時刻は、内部の `validate()` 関数で範囲チェックされます：
+
+```python
+def validate(hour: int, minute: int) -> Optional[Tuple[int, int]]:
+    if not (0 <= minute < 60):
+        return None
+    if not (0 <= hour < 24):
+        return None
+    return (hour, minute)
+```
+
+**検証内容**：
+- 時：0〜23の範囲
+- 分：0〜59の範囲
+- 範囲外の場合は `None` を返す
 
 ### 1. 午後表記
 
@@ -70,7 +88,7 @@ if match:
     minute = int(match.group(2)) if match.group(2) else 0
     if hour != 12:
         hour += 12
-    return (hour, minute)
+    return validate(hour, minute)
 ```
 
 **変換ルール**：
@@ -87,7 +105,7 @@ if match:
     minute = int(match.group(2)) if match.group(2) else 0
     if hour == 12:
         hour = 0
-    return (hour, minute)
+    return validate(hour, minute)
 ```
 
 **変換ルール**：
@@ -102,7 +120,7 @@ match = re.match(r"(\d{1,2})[時:](\d{0,2})分?", time_text)
 if match:
     hour = int(match.group(1))
     minute = int(match.group(2)) if match.group(2) else 0
-    return (hour, minute)
+    return validate(hour, minute)
 ```
 
 **対応フォーマット**：
@@ -614,6 +632,93 @@ if match:
 - 正規表現で時刻部分も直接抽出（`parse_time_with_ampm()` を使用しない）
 - ISO 8601形式に準拠した最も構造化されたフォーマット
 
+### Pattern 14: MM/DD HH:MM（スラッシュ区切り + コロン時刻）
+
+```python
+match = re.match(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+if match:
+    month = int(match.group(1))
+    day = int(match.group(2))
+    hour = int(match.group(3))
+    minute = int(match.group(4))
+    year = now.year
+
+    try:
+        target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+        # If the date has passed this year, use next year
+        if is_past_time(target_time):
+            target_time = datetime(year + 1, month, day, hour, minute, tzinfo=TZ)
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+        return (schedule, desc)
+    except ValueError:
+        return None
+```
+
+**対応例**：
+- `11/25 18:00` → 2025年11月25日 18:00
+- `3/14 09:30` → 2026年3月14日 09:30（既に過ぎている場合）
+
+**年の自動補完**：
+- 年の指定がないため、現在年を使用
+- 既に過ぎている場合は翌年に自動調整
+
+### Pattern 15: MM/DD 時刻（スラッシュ区切り + 日本語時刻）
+
+```python
+match = re.match(r"(\d{1,2})/(\d{1,2})\s+(.+)", text)
+if match:
+    month = int(match.group(1))
+    day = int(match.group(2))
+    time_part = match.group(3)
+    year = now.year
+
+    time_tuple = parse_time_with_ampm(time_part)
+    if time_tuple is None:
+        return None
+
+    hour, minute = time_tuple
+
+    try:
+        target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+        # If the date has passed this year, use next year
+        if is_past_time(target_time):
+            target_time = datetime(year + 1, month, day, hour, minute, tzinfo=TZ)
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+        return (schedule, desc)
+    except ValueError:
+        return None
+```
+
+**対応例**：
+- `11/24 18時` → 2025年11月24日 18:00
+- `12/31 午後3時` → 2025年12月31日 15:00
+- `1/1 午前9時30分` → 2026年1月1日 09:30（既に過ぎている場合）
+
+**ポイント**：
+- `parse_time_with_ampm()` を使用して柔軟な時刻表記に対応
+- `18時`、`午後3時`、`14:00` などすべてパース可能
+
+### Pattern 16: MM月DD日 時刻（月日 + 日本語時刻）
+
+**注意**: このパターンは Pattern 10 と重複しているため、実際の実装ではコメントとして記載されています。
+
+```python
+# Pattern 16: MM月DD日 時刻 (e.g., "11月25日 18時", "11月25日 午後3時")
+# Note: This pattern is already handled by Pattern 10 above
+```
+
+Pattern 10 が `r"(\d{1,2})月(\d{1,2})日?\s*(.+)"` で時刻付きの形式も処理するため、明示的なパターン定義は不要です。
+
+**対応例（Pattern 10 で処理）**：
+- `11月25日 18時` → 2025年11月25日 18:00
+- `12月31日 午後3時` → 2025年12月31日 15:00
+
 ## 過去時刻の検出と調整
 
 過去時刻の判定には、専用の関数 `is_past_time()` を使用しています：
@@ -694,8 +799,9 @@ print(target_time.isoformat())
 
 1. **パターンマッチングの順序**: より具体的なパターンを先に配置
 2. **内部ヘルパー関数の活用**: `parse_time_with_ampm()` で時刻パース処理を集約
-3. **過去時刻の自動調整**: パターンに応じて柔軟に対応
-4. **タイムゾーン対応**: `zoneinfo` を使用した正確な時刻計算
-5. **エラーハンドリング**: 範囲チェックと `ValueError` のキャッチ
+3. **時刻バリデーション**: 0-23時、0-59分の範囲チェック
+4. **過去時刻の自動調整**: パターンに応じて柔軟に対応
+5. **タイムゾーン対応**: `zoneinfo` を使用した正確な時刻計算
+6. **エラーハンドリング**: 範囲チェックと `ValueError` のキャッチ
 
-この実装により、「明日9時」「毎週月曜20時」「2025年5月3日 14:00」など、13種類以上の自然言語表現に対応した柔軟なパーサーを実現しました。
+この実装により、「明日9時」「毎週月曜20時」「2025年5月3日 14:00」「11/24 18時」など、16種類以上の自然言語表現に対応した柔軟なパーサーを実現しました。

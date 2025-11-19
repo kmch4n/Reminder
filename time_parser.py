@@ -483,6 +483,82 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
+    # Pattern 14: MM/DD HH:MM (e.g., "11/25 18:00")
+    match = re.match(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+    if match:
+        month = int(match.group(1))
+        day = int(match.group(2))
+        hour = int(match.group(3))
+        minute = int(match.group(4))
+        year = now.year
+
+        try:
+            target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+            # If the date has passed this year, use next year
+            if is_past_time(target_time):
+                target_time = datetime(year + 1, month, day, hour, minute, tzinfo=TZ)
+
+            schedule = {"type": "once", "run_at": target_time.isoformat()}
+            desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+            return (schedule, desc)
+        except ValueError:
+            return None
+
+    # Pattern 15: MM/DD HH時 or MM/DD 時刻 (e.g., "11/24 18時", "11/24 午後3時")
+    match = re.match(r"(\d{1,2})/(\d{1,2})\s+(.+)", text)
+    if match:
+        month = int(match.group(1))
+        day = int(match.group(2))
+        time_part = match.group(3)
+        year = now.year
+
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+
+        try:
+            target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+            # If the date has passed this year, use next year
+            if is_past_time(target_time):
+                target_time = datetime(year + 1, month, day, hour, minute, tzinfo=TZ)
+
+            schedule = {"type": "once", "run_at": target_time.isoformat()}
+            desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+            return (schedule, desc)
+        except ValueError:
+            return None
+
+    # Pattern 16: MM月DD日 時刻 (e.g., "11月25日 18時", "11月25日 午後3時")
+    match = re.match(r"(\d{1,2})月(\d{1,2})日?\s+(.+)", text)
+    if match:
+        month = int(match.group(1))
+        day = int(match.group(2))
+        time_part = match.group(3)
+        year = now.year
+
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+
+        try:
+            target_time = datetime(year, month, day, hour, minute, tzinfo=TZ)
+
+            # If the date has passed this year, use next year
+            if is_past_time(target_time):
+                target_time = datetime(year + 1, month, day, hour, minute, tzinfo=TZ)
+
+            schedule = {"type": "once", "run_at": target_time.isoformat()}
+            desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+            return (schedule, desc)
+        except ValueError:
+            return None
+
     return None
 
 
