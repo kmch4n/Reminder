@@ -11,6 +11,8 @@ import sys
 import json
 import time
 import logging
+import calendar
+import fcntl
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -69,6 +71,32 @@ def get_archive_file_path() -> Path:
     return Path(DATA_DIR) / "archive.json"
 
 
+def _read_json_file(file_path: Path) -> List[Dict[str, Any]]:
+    """Read JSON data from file with a shared lock."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        try:
+            return json.load(f)
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _write_json_file(file_path: Path, data: List[Dict[str, Any]]) -> None:
+    """Write JSON data to file with an exclusive lock."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(file_path, "a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def load_reminders_from_file() -> List[Dict[str, Any]]:
     """
     Load all reminders from JSON file.
@@ -82,8 +110,7 @@ def load_reminders_from_file() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return _read_json_file(file_path)
     except (json.JSONDecodeError, IOError) as e:
         logger.error(f"Error loading reminders: {e}")
         return []
@@ -97,11 +124,9 @@ def save_reminders_to_file(reminders: List[Dict[str, Any]]) -> None:
         reminders: List of reminder dictionaries to save.
     """
     file_path = get_reminders_file_path()
-    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(reminders, f, ensure_ascii=False, indent=2)
+        _write_json_file(file_path, reminders)
     except IOError as e:
         logger.error(f"Error saving reminders: {e}")
         raise
@@ -120,8 +145,7 @@ def load_archive_from_file() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return _read_json_file(file_path)
     except (json.JSONDecodeError, IOError) as e:
         logger.error(f"Error loading archive: {e}")
         return []
@@ -135,11 +159,9 @@ def save_archive_to_file(archive: List[Dict[str, Any]]) -> None:
         archive: List of archived reminder dictionaries to save.
     """
     file_path = get_archive_file_path()
-    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(archive, f, ensure_ascii=False, indent=2)
+        _write_json_file(file_path, archive)
     except IOError as e:
         logger.error(f"Error saving archive: {e}")
         raise
@@ -259,42 +281,27 @@ def calculate_next_run_at(
         # Parse target time
         target_time = datetime.strptime(time_str, "%H:%M").time()
 
-        # Move to next month
-        if current_run.month == 12:
-            next_run = current_run.replace(year=current_run.year + 1, month=1)
-        else:
-            next_run = current_run.replace(month=current_run.month + 1)
+        year = current_run.year
+        month = current_run.month
 
-        # Try to set the day
-        try:
-            next_run = next_run.replace(
-                day=day,
-                hour=target_time.hour,
-                minute=target_time.minute,
-                second=0,
-                microsecond=0,
-            )
-        except ValueError:
-            # Day doesn't exist in this month, skip to next month
-            if next_run.month == 12:
-                next_run = next_run.replace(
-                    year=next_run.year + 1,
-                    month=1,
-                    day=day,
-                    hour=target_time.hour,
-                    minute=target_time.minute,
-                    second=0,
-                    microsecond=0,
-                )
-            else:
-                next_run = next_run.replace(
-                    month=next_run.month + 1,
-                    day=day,
-                    hour=target_time.hour,
-                    minute=target_time.minute,
-                    second=0,
-                    microsecond=0,
-                )
+        while True:
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+            if day <= calendar.monthrange(year, month)[1]:
+                break
+
+        next_run = current_run.replace(
+            year=year,
+            month=month,
+            day=day,
+            hour=target_time.hour,
+            minute=target_time.minute,
+            second=0,
+            microsecond=0,
+        )
 
         return next_run.isoformat()
 

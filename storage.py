@@ -5,6 +5,7 @@ storage.py - JSON file storage operations for reminders
 import os
 import json
 import logging
+import fcntl
 from pathlib import Path
 from typing import Dict, List, Any
 
@@ -25,6 +26,32 @@ def get_reminders_file_path() -> Path:
     return Path(DATA_DIR) / "reminders.json"
 
 
+def _read_json_file(file_path: Path) -> List[Dict[str, Any]]:
+    """Read JSON data from file with a shared lock."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        try:
+            return json.load(f)
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _write_json_file(file_path: Path, data: List[Dict[str, Any]]) -> None:
+    """Write JSON data to file with an exclusive lock."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(file_path, "a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def load_reminders_from_file() -> List[Dict[str, Any]]:
     """Load all reminders from JSON file."""
     file_path = get_reminders_file_path()
@@ -33,8 +60,7 @@ def load_reminders_from_file() -> List[Dict[str, Any]]:
         return []
 
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return _read_json_file(file_path)
     except (json.JSONDecodeError, IOError) as e:
         logger.error(f"Error loading reminders: {e}")
         return []
@@ -43,11 +69,9 @@ def load_reminders_from_file() -> List[Dict[str, Any]]:
 def save_reminders_to_file(reminders: List[Dict[str, Any]]) -> None:
     """Save all reminders to JSON file."""
     file_path = get_reminders_file_path()
-    file_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(reminders, f, ensure_ascii=False, indent=2)
+        _write_json_file(file_path, reminders)
     except IOError as e:
         logger.error(f"Error saving reminders: {e}")
         raise

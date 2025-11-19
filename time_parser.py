@@ -4,6 +4,7 @@ time_parser.py - Natural language time parsing for Japanese reminders
 
 import os
 import re
+import calendar
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any
 from zoneinfo import ZoneInfo
@@ -92,8 +93,15 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     now = get_current_time()
 
     # Helper function to parse time with 午前/午後
-    def parse_time_with_ampm(time_text: str) -> Tuple[int, int]:
+    def parse_time_with_ampm(time_text: str) -> Optional[Tuple[int, int]]:
         """Parse time text with 午前/午後. Returns (hour, minute)."""
+
+        def validate(hour: int, minute: int) -> Optional[Tuple[int, int]]:
+            if not (0 <= minute < 60):
+                return None
+            if not (0 <= hour < 24):
+                return None
+            return (hour, minute)
         # 午後3時30分, 午前9時
         match = re.match(r"午後\s*(\d{1,2})時?(\d{0,2})分?", time_text)
         if match:
@@ -101,7 +109,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             minute = int(match.group(2)) if match.group(2) else 0
             if hour != 12:
                 hour += 12
-            return (hour, minute)
+            return validate(hour, minute)
 
         match = re.match(r"午前\s*(\d{1,2})時?(\d{0,2})分?", time_text)
         if match:
@@ -109,14 +117,14 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             minute = int(match.group(2)) if match.group(2) else 0
             if hour == 12:
                 hour = 0
-            return (hour, minute)
+            return validate(hour, minute)
 
         # Regular HH:MM or HH時MM分
         match = re.match(r"(\d{1,2})[時:](\d{0,2})分?", time_text)
         if match:
             hour = int(match.group(1))
             minute = int(match.group(2)) if match.group(2) else 0
-            return (hour, minute)
+            return validate(hour, minute)
 
         return None
 
@@ -617,8 +625,13 @@ def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:
         now = get_current_time()
         target_time = datetime.strptime(time_str, "%H:%M").time()
 
-        try:
-            next_run = now.replace(
+        year = now.year
+        month = now.month
+
+        def build_run(y: int, m: int) -> datetime:
+            return now.replace(
+                year=y,
+                month=m,
                 day=day,
                 hour=target_time.hour,
                 minute=target_time.minute,
@@ -626,32 +639,25 @@ def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:
                 microsecond=0,
             )
 
-            if next_run <= now:
-                if now.month == 12:
-                    next_run = next_run.replace(year=now.year + 1, month=1)
-                else:
-                    next_run = next_run.replace(month=now.month + 1)
-        except ValueError:
-            if now.month == 12:
-                next_run = now.replace(
-                    year=now.year + 1,
-                    month=1,
-                    day=day,
-                    hour=target_time.hour,
-                    minute=target_time.minute,
-                    second=0,
-                    microsecond=0,
-                )
-            else:
-                next_run = now.replace(
-                    month=now.month + 1,
-                    day=day,
-                    hour=target_time.hour,
-                    minute=target_time.minute,
-                    second=0,
-                    microsecond=0,
-                )
+        # Try current month if the day exists and time is in the future
+        days_in_month = calendar.monthrange(year, month)[1]
+        if day <= days_in_month:
+            candidate = build_run(year, month)
+            if candidate > now:
+                return candidate.isoformat()
 
-        return next_run.isoformat()
+        # Otherwise, find the next month that contains the target day
+        while True:
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+            if day > calendar.monthrange(year, month)[1]:
+                continue
+
+            candidate = build_run(year, month)
+            if candidate > now:
+                return candidate.isoformat()
 
     return None
