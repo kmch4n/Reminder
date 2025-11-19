@@ -529,8 +529,43 @@ def create_main_menu_quick_reply() -> QuickReply:
             QuickReplyItem(
                 action=MessageAction(label="リマインド一覧", text="リマインド一覧")
             ),
+            QuickReplyItem(
+                action=MessageAction(label="リマインド削除", text="リマインド削除")
+            ),
         ]
     )
+
+
+def create_delete_quick_reply(reminder_count: int) -> QuickReply:
+    """
+    Create quick reply buttons for reminder deletion.
+
+    Args:
+        reminder_count: Number of reminders to display buttons for
+
+    Returns:
+        QuickReply object with deletion options.
+    """
+    items = []
+
+    # Add individual delete buttons (limit to first 10 reminders)
+    display_count = min(reminder_count, 10)
+    for i in range(1, display_count + 1):
+        items.append(
+            QuickReplyItem(action=MessageAction(label=f"{i}を削除", text=f"{i}"))
+        )
+
+    # Add "delete all" button
+    items.append(
+        QuickReplyItem(action=MessageAction(label="すべてを削除", text="すべてを削除"))
+    )
+
+    # Add cancel button
+    items.append(
+        QuickReplyItem(action=MessageAction(label="キャンセル", text="キャンセル"))
+    )
+
+    return QuickReply(items=items)
 
 
 def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:

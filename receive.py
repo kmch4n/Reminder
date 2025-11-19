@@ -26,15 +26,24 @@ from time_parser import (
     parse_natural_time,
     create_time_quick_reply,
     create_main_menu_quick_reply,
+    create_delete_quick_reply,
 )
 from session import (
     get_user_session,
     clear_user_session,
     start_waiting_for_time_session,
+    start_waiting_for_delete_id_session,
+    start_waiting_for_delete_all_confirmation_session,
     increment_fail_count,
     MAX_FAIL_COUNT,
 )
-from helpers import create_reminder_object, format_reminder_list
+from helpers import (
+    create_reminder_object,
+    format_reminder_list,
+    format_reminder_list_for_deletion,
+    delete_reminder_by_id,
+    delete_all_reminders,
+)
 
 # Load environment variables
 try:
@@ -51,7 +60,9 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 DATA_DIR = os.getenv("REMINDER_DATA_DIR", "./data")
 TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
-PUBLIC_URL = os.getenv("REMINDER_PUBLIC_URL", "https://your-domain.com/reminder/callback")
+PUBLIC_URL = os.getenv(
+    "REMINDER_PUBLIC_URL", "https://your-domain.com/reminder/callback"
+)
 
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     print("Error: LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET must be set")
@@ -104,6 +115,28 @@ def handle_text_message(event: MessageEvent):
     if received_text == "リマインド一覧":
         reply_text = format_reminder_list(user_id)
         quick_reply = create_main_menu_quick_reply()
+
+        # Send reply message
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
+                )
+            )
+        return
+
+    # Check for reminder delete command
+    if received_text == "リマインド削除":
+        reply_text, reminders = format_reminder_list_for_deletion(user_id)
+
+        if reminders:
+            # Start delete session
+            start_waiting_for_delete_id_session(user_id, reminders)
+            quick_reply = create_delete_quick_reply(len(reminders))
+        else:
+            quick_reply = create_main_menu_quick_reply()
 
         # Send reply message
         with ApiClient(configuration) as api_client:
@@ -180,6 +213,122 @@ def handle_text_message(event: MessageEvent):
                         "登録をやめる場合は「キャンセル」と送信してください。"
                     )
                     quick_reply = create_time_quick_reply()
+
+    elif session and session.get("state") == "waiting_for_delete_id":
+        # Check for cancel command
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
+            clear_user_session(user_id)
+            reply_text = "リマインダーの削除をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        # Check for "delete all" command
+        elif received_text == "すべてを削除":
+            # Start delete-all confirmation session
+            start_waiting_for_delete_all_confirmation_session(user_id)
+            reply_text = (
+                "⚠️ 本当にすべてのリマインダーを削除しますか？\n\n"
+                "削除する場合は「削除」と送信してください。\n"
+                "キャンセルする場合は「キャンセル」と送信してください。"
+            )
+            quick_reply = None
+        else:
+            # User is sending delete ID
+            reminders = session.get("reminders", [])
+
+            # Try to parse as number
+            try:
+                delete_index = int(received_text) - 1
+
+                if 0 <= delete_index < len(reminders):
+                    # Delete the reminder
+                    reminder_to_delete = reminders[delete_index]
+                    reminder_id = reminder_to_delete.get("id")
+                    reminder_text = reminder_to_delete.get("text", "")
+
+                    if delete_reminder_by_id(reminder_id):
+                        reply_text = f"✅ リマインダーを削除しました。\n\n内容: 「{reminder_text}」"
+                        quick_reply = create_main_menu_quick_reply()
+                    else:
+                        reply_text = "❌ リマインダーの削除に失敗しました。"
+                        quick_reply = create_main_menu_quick_reply()
+
+                    # Clear session
+                    clear_user_session(user_id)
+                else:
+                    # Invalid number
+                    fail_count = increment_fail_count(user_id)
+
+                    if fail_count >= MAX_FAIL_COUNT:
+                        clear_user_session(user_id)
+                        reply_text = (
+                            f"⚠️ {MAX_FAIL_COUNT}回失敗したため、削除を中止しました。\n"
+                            "最初からやり直してください。"
+                        )
+                        quick_reply = create_main_menu_quick_reply()
+                    else:
+                        reply_text = (
+                            f"⚠️ 無効な番号です。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                            f"1〜{len(reminders)}の番号を送信してください。\n"
+                            "削除をやめる場合は「キャンセル」と送信してください。"
+                        )
+                        quick_reply = create_delete_quick_reply(len(reminders))
+            except ValueError:
+                # Not a number
+                fail_count = increment_fail_count(user_id)
+
+                if fail_count >= MAX_FAIL_COUNT:
+                    clear_user_session(user_id)
+                    reply_text = (
+                        f"⚠️ {MAX_FAIL_COUNT}回失敗したため、削除を中止しました。\n"
+                        "最初からやり直してください。"
+                    )
+                    quick_reply = create_main_menu_quick_reply()
+                else:
+                    reply_text = (
+                        f"⚠️ 数字を送信してください。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                        f"1〜{len(reminders)}の番号を送信してください。\n"
+                        "削除をやめる場合は「キャンセル」と送信してください。"
+                    )
+                    quick_reply = create_delete_quick_reply(len(reminders))
+
+    elif session and session.get("state") == "waiting_for_delete_all_confirmation":
+        # Check for confirmation
+        if received_text in ["削除", "はい", "yes"]:
+            # Delete all reminders
+            deleted_count = delete_all_reminders(user_id)
+
+            if deleted_count > 0:
+                reply_text = (
+                    f"✅ すべてのリマインダー（{deleted_count}件）を削除しました。"
+                )
+            else:
+                reply_text = "削除するリマインダーがありませんでした。"
+
+            quick_reply = create_main_menu_quick_reply()
+            clear_user_session(user_id)
+        elif received_text.lower() in [
+            "キャンセル",
+            "cancel",
+            "やめる",
+            "いいえ",
+            "no",
+        ]:
+            clear_user_session(user_id)
+            reply_text = "すべての削除をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        else:
+            # Invalid input
+            fail_count = increment_fail_count(user_id)
+
+            if fail_count >= MAX_FAIL_COUNT:
+                clear_user_session(user_id)
+                reply_text = (
+                    f"⚠️ {MAX_FAIL_COUNT}回失敗したため、削除を中止しました。\n"
+                    "最初からやり直してください。"
+                )
+                quick_reply = create_main_menu_quick_reply()
+            else:
+                reply_text = f"⚠️ 「削除」または「キャンセル」と送信してください。（{fail_count}/{MAX_FAIL_COUNT}回目）"
+                quick_reply = None
 
     else:
         # Check for reminder setup command
