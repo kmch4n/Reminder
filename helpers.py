@@ -4,7 +4,7 @@ helpers.py - Reminder creation and display utilities
 
 import uuid
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from storage import load_reminders_from_file
 from time_parser import calculate_initial_run_at, get_current_time
@@ -98,6 +98,193 @@ def format_reminder_list(user_id: str) -> str:
         lines.append(f"   {text}\n")
 
     return "\n".join(lines)
+
+
+def create_reminder_list_flex(user_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Create Flex Message for reminder list display (Design 2).
+    Creates separate bubbles for each schedule type (once, weekly, monthly).
+
+    Args:
+        user_id: LINE user ID
+
+    Returns:
+        Flex Message contents dict (Carousel) or None if no reminders.
+    """
+    reminders = load_reminders_from_file()
+    user_reminders = [
+        r
+        for r in reminders
+        if r.get("user_id") == user_id and r.get("status") == "pending"
+    ]
+
+    if not user_reminders:
+        return None
+
+    # Group reminders by schedule type
+    reminders_by_type = {
+        "once": [],
+        "weekly": [],
+        "monthly": [],
+    }
+
+    for reminder in user_reminders:
+        schedule_type = reminder.get("schedule", {}).get("type", "once")
+        if schedule_type in reminders_by_type:
+            reminders_by_type[schedule_type].append(reminder)
+
+    # Sort each group by next_run_at
+    for schedule_type in reminders_by_type:
+        reminders_by_type[schedule_type].sort(
+            key=lambda r: r.get("next_run_at", "")
+        )
+
+    # Build bubbles for each schedule type
+    bubbles = []
+
+    # Helper function to create a bubble for a schedule type
+    def create_bubble(schedule_type: str, reminders_list: list) -> Dict[str, Any]:
+        if schedule_type == "once":
+            title = "⏰ 一度きり"
+            header_color = "#2d5016"
+            bar_color = "#70AD47"
+            type_icon = "⏰"
+        elif schedule_type == "weekly":
+            title = "🔁 毎週"
+            header_color = "#1e3a5f"
+            bar_color = "#5B9BD5"
+            type_icon = "🔁"
+        else:  # monthly
+            title = "📅 毎月"
+            header_color = "#5f2d11"
+            bar_color = "#ED7D31"
+            type_icon = "📅"
+
+        # Build reminder items
+        body_contents = []
+
+        for i, reminder in enumerate(reminders_list, 1):
+            text = reminder.get("text", "")
+            next_run_at_str = reminder.get("next_run_at", "")
+
+            # Format datetime
+            try:
+                next_run_at = datetime.fromisoformat(next_run_at_str)
+                date_str = next_run_at.strftime("%m/%d")
+                weekday_str = next_run_at.strftime("(%a)")
+                time_str = next_run_at.strftime("%H:%M")
+            except (ValueError, AttributeError):
+                date_str = "不明"
+                weekday_str = ""
+                time_str = ""
+
+            # Create reminder box with left color bar
+            reminder_box = {
+                "type": "box",
+                "layout": "horizontal",
+                "contents": [
+                    # Left color bar
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [],
+                        "width": "5px",
+                        "backgroundColor": bar_color,
+                    },
+                    # Content
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "contents": [
+                            # Icon and date/time row
+                            {
+                                "type": "box",
+                                "layout": "horizontal",
+                                "contents": [
+                                    {
+                                        "type": "text",
+                                        "text": type_icon,
+                                        "size": "md",
+                                        "flex": 0,
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": f"{date_str} {weekday_str} {time_str}",
+                                        "size": "sm",
+                                        "weight": "bold",
+                                        "color": "#ffffff",
+                                        "margin": "sm",
+                                    },
+                                ],
+                            },
+                            # Separator
+                            {
+                                "type": "separator",
+                                "margin": "md",
+                                "color": "#404040",
+                            },
+                            # Message
+                            {
+                                "type": "text",
+                                "text": text,
+                                "size": "md",
+                                "color": "#e0e0e0",
+                                "wrap": True,
+                                "margin": "md",
+                            },
+                        ],
+                        "paddingAll": "12px",
+                        "flex": 1,
+                    },
+                ],
+                "backgroundColor": "#2c2c2c",
+                "cornerRadius": "8px",
+                "margin": "sm" if i > 1 else "none",
+            }
+
+            body_contents.append(reminder_box)
+
+        # Build bubble
+        return {
+            "type": "bubble",
+            "size": "mega",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": title,
+                        "size": "xl",
+                        "weight": "bold",
+                        "color": "#ffffff",
+                    }
+                ],
+                "backgroundColor": header_color,
+                "paddingAll": "18px",
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": body_contents,
+                "paddingAll": "12px",
+                "backgroundColor": "#1a1a1a",
+            },
+        }
+
+    # Create bubbles in order: once, weekly, monthly
+    for schedule_type in ["once", "weekly", "monthly"]:
+        if reminders_by_type[schedule_type]:
+            bubbles.append(create_bubble(schedule_type, reminders_by_type[schedule_type]))
+
+    # Return Carousel if multiple bubbles, otherwise single bubble
+    if len(bubbles) == 1:
+        return bubbles[0]
+    else:
+        return {
+            "type": "carousel",
+            "contents": bubbles,
+        }
 
 
 def format_reminder_list_for_deletion(user_id: str) -> tuple:

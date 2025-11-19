@@ -17,6 +17,8 @@ from linebot.v3.messaging import (
     MessagingApi,
     ReplyMessageRequest,
     TextMessage,
+    FlexMessage,
+    FlexContainer,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
@@ -40,6 +42,7 @@ from session import (
 from helpers import (
     create_reminder_object,
     format_reminder_list,
+    create_reminder_list_flex,
     format_reminder_list_for_deletion,
     delete_reminder_by_id,
     delete_all_reminders,
@@ -113,18 +116,40 @@ def handle_text_message(event: MessageEvent):
 
     # Check for reminder list command
     if received_text == "リマインド一覧":
-        reply_text = format_reminder_list(user_id)
+        flex_contents = create_reminder_list_flex(user_id)
         quick_reply = create_main_menu_quick_reply()
 
         # Send reply message
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
+
+            if flex_contents:
+                # Send Flex Message
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[
+                            FlexMessage(
+                                alt_text="リマインダー一覧",
+                                contents=FlexContainer.from_dict(flex_contents),
+                                quick_reply=quick_reply,
+                            )
+                        ],
+                    )
                 )
-            )
+            else:
+                # No reminders - send text message
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[
+                            TextMessage(
+                                text="📋 登録されているリマインダーはありません。",
+                                quick_reply=quick_reply,
+                            )
+                        ],
+                    )
+                )
         return
 
     # Check for reminder delete command
