@@ -71,6 +71,32 @@ if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     print("Error: LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET must be set")
     sys.exit(1)
 
+
+def load_settings():
+    """
+    Load settings from data/settings.json.
+
+    Returns:
+        dict: Settings dictionary with default values if file doesn't exist.
+    """
+    import json
+
+    settings_file = os.path.join(DATA_DIR, "settings.json")
+
+    # Default settings
+    default_settings = {"use_flex_message": True}
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+            # Merge with defaults to ensure all keys exist
+            return {**default_settings, **settings}
+    except FileNotFoundError:
+        return default_settings
+    except json.JSONDecodeError:
+        print(f"Warning: Invalid JSON in {settings_file}, using defaults")
+        return default_settings
+
 # Initialize Flask app
 app = Flask(__name__)
 
@@ -116,35 +142,54 @@ def handle_text_message(event: MessageEvent):
 
     # Check for reminder list command
     if received_text == "リマインド一覧":
-        flex_contents = create_reminder_list_flex(user_id)
+        settings = load_settings()
+        use_flex = settings.get("use_flex_message", True)
         quick_reply = create_main_menu_quick_reply()
 
         # Send reply message
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
 
-            if flex_contents:
-                # Send Flex Message
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[
-                            FlexMessage(
-                                alt_text="リマインダー一覧",
-                                contents=FlexContainer.from_dict(flex_contents),
-                                quick_reply=quick_reply,
-                            )
-                        ],
+            if use_flex:
+                # Use Flex Message
+                flex_contents = create_reminder_list_flex(user_id)
+
+                if flex_contents:
+                    # Send Flex Message
+                    line_bot_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[
+                                FlexMessage(
+                                    alt_text="リマインダー一覧",
+                                    contents=FlexContainer.from_dict(flex_contents),
+                                    quick_reply=quick_reply,
+                                )
+                            ],
+                        )
                     )
-                )
+                else:
+                    # No reminders - send text message
+                    line_bot_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[
+                                TextMessage(
+                                    text="📋 登録されているリマインダーはありません。",
+                                    quick_reply=quick_reply,
+                                )
+                            ],
+                        )
+                    )
             else:
-                # No reminders - send text message
+                # Use text message
+                reminder_text = format_reminder_list(user_id)
                 line_bot_api.reply_message(
                     ReplyMessageRequest(
                         reply_token=event.reply_token,
                         messages=[
                             TextMessage(
-                                text="📋 登録されているリマインダーはありません。",
+                                text=reminder_text,
                                 quick_reply=quick_reply,
                             )
                         ],
