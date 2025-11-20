@@ -44,6 +44,7 @@ from helpers import (
     format_reminder_list,
     create_reminder_list_flex,
     format_reminder_list_for_deletion,
+    create_reminder_deletion_flex,
     delete_reminder_by_id,
     delete_all_reminders,
 )
@@ -96,6 +97,7 @@ def load_settings():
     except json.JSONDecodeError:
         print(f"Warning: Invalid JSON in {settings_file}, using defaults")
         return default_settings
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -199,24 +201,67 @@ def handle_text_message(event: MessageEvent):
 
     # Check for reminder delete command
     if received_text == "リマインド削除":
-        reply_text, reminders = format_reminder_list_for_deletion(user_id)
-
-        if reminders:
-            # Start delete session
-            start_waiting_for_delete_id_session(user_id, reminders)
-            quick_reply = create_delete_quick_reply(len(reminders))
-        else:
-            quick_reply = create_main_menu_quick_reply()
+        settings = load_settings()
+        use_flex = settings.get("use_flex_message", True)
+        quick_reply = create_main_menu_quick_reply()
 
         # Send reply message
         with ApiClient(configuration) as api_client:
             line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
+
+            if use_flex:
+                # Use Flex Message
+                result = create_reminder_deletion_flex(user_id)
+
+                if result:
+                    flex_contents, reminders = result
+                    # Start delete session
+                    start_waiting_for_delete_id_session(user_id, reminders)
+                    quick_reply = create_delete_quick_reply(len(reminders))
+
+                    # Send Flex Message
+                    line_bot_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[
+                                FlexMessage(
+                                    alt_text="リマインダー削除",
+                                    contents=FlexContainer.from_dict(flex_contents),
+                                    quick_reply=quick_reply,
+                                )
+                            ],
+                        )
+                    )
+                else:
+                    # No reminders - send text message
+                    line_bot_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[
+                                TextMessage(
+                                    text="📋 削除できるリマインダーはありません。",
+                                    quick_reply=quick_reply,
+                                )
+                            ],
+                        )
+                    )
+            else:
+                # Use text message
+                reply_text, reminders = format_reminder_list_for_deletion(user_id)
+
+                if reminders:
+                    # Start delete session
+                    start_waiting_for_delete_id_session(user_id, reminders)
+                    quick_reply = create_delete_quick_reply(len(reminders))
+
+                line_bot_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[
+                            TextMessage(text=reply_text, quick_reply=quick_reply)
+                        ],
+                    )
                 )
-            )
         return
 
     # Check if user has an active session
