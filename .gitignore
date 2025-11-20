@@ -129,8 +129,11 @@ CLAUDE.md
 # Project-specific
 data/reminders.json
 data/archive.json
+data/settings.json
 *.log
 .DS_Store
 
-# tester
+# Other
+.vscode
+dev/
 test.py

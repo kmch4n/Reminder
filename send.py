@@ -199,7 +199,7 @@ def append_to_archive(completed_reminders: List[Dict[str, Any]]) -> None:
 
 def send_line_push_message(user_id: str, text: str) -> bool:
     """
-    Send a push message to a LINE user.
+    Send a push message to a LINE user with quick reply menu.
 
     Args:
         user_id: LINE user ID
@@ -213,7 +213,40 @@ def send_line_push_message(user_id: str, text: str) -> bool:
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
     }
 
-    payload = {"to": user_id, "messages": [{"type": "text", "text": text}]}
+    # Create quick reply menu
+    quick_reply = {
+        "items": [
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": "リマインド設定",
+                    "text": "リマインド設定",
+                },
+            },
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": "リマインド一覧",
+                    "text": "リマインド一覧",
+                },
+            },
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": "リマインド削除",
+                    "text": "リマインド削除",
+                },
+            },
+        ]
+    }
+
+    payload = {
+        "to": user_id,
+        "messages": [{"type": "text", "text": text, "quickReply": quick_reply}],
+    }
 
     try:
         response = requests.post(LINE_PUSH_MESSAGE_URL, headers=headers, json=payload)
