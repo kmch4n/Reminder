@@ -102,6 +102,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             if not (0 <= hour < 24):
                 return None
             return (hour, minute)
+
         # 午後3時30分, 午前9時
         match = re.match(r"午後\s*(\d{1,2})時?(\d{0,2})分?", time_text)
         if match:
@@ -192,6 +193,32 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = target_time.strftime("%Y年%m月%d日 09:00")
         return (schedule, desc)
 
+    # Pattern 1a: 毎日 時刻 (recurring daily)
+    match = re.match(r"毎日\s*(.+)", text)
+    if match:
+        time_part = match.group(1)
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+        hour, minute = time_tuple
+        time_str = f"{hour:02d}:{minute:02d}"
+        schedule = {"type": "daily", "time": time_str}
+        desc = f"毎日 {time_str}"
+        return (schedule, desc)
+
+    # Pattern 1b: 全曜日 時刻 → 毎日として扱う
+    match = re.match(r"全曜日\s*(.+)", text)
+    if match:
+        time_part = match.group(1)
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+        hour, minute = time_tuple
+        time_str = f"{hour:02d}:{minute:02d}"
+        schedule = {"type": "daily", "time": time_str}
+        desc = f"毎日 {time_str}"
+        return (schedule, desc)
+
     # Pattern 1: 毎週 曜日 時刻 (recurring weekly)
     match = re.match(r"毎週\s*([月火水木金土日]曜?日?)\s*(.+)", text)
     if match:
@@ -251,6 +278,54 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         # Calculate next week's target weekday
         days_ahead = weekday - now.weekday() + 7  # Always next week
+
+        target_time = now + timedelta(days=days_ahead)
+        target_time = target_time.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = (
+            target_time.strftime("%Y年%m月%d日(%a) %H:%M")
+            .replace("Mon", "月")
+            .replace("Tue", "火")
+            .replace("Wed", "水")
+            .replace("Thu", "木")
+            .replace("Fri", "金")
+            .replace("Sat", "土")
+            .replace("Sun", "日")
+        )
+        return (schedule, desc)
+
+    # Pattern 3a: 今週○曜日 時刻
+    match = re.match(r"今週\s*([月火水木金土日]曜?日?)\s*(.+)", text)
+    if match:
+        weekday_text = match.group(1)
+        time_part = match.group(2)
+
+        weekday = get_weekday_number(weekday_text)
+        if weekday is None:
+            return None
+
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+
+        now = get_current_time()
+        current_weekday = now.weekday()
+
+        # Calculate this week's target weekday
+        days_ahead = weekday - current_weekday
+
+        # If the day has passed or same day with time passed, move to next week
+        if days_ahead < 0:
+            days_ahead += 7
+        elif days_ahead == 0:
+            target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target_time <= now:
+                days_ahead = 7
 
         target_time = now + timedelta(days=days_ahead)
         target_time = target_time.replace(
@@ -559,6 +634,69 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
+    # Pattern 17: DD日 時刻 (e.g., "19日 17時" - month omitted)
+    match = re.match(r"(\d{1,2})日\s+(.+)", text)
+    if match:
+        day = int(match.group(1))
+        time_part = match.group(2)
+
+        # Validate day range
+        if day < 1 or day > 31:
+            return None
+
+        # Parse time
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+
+        year = now.year
+        month = now.month
+
+        # Try this month first
+        try:
+            # Check if this month has this day
+            max_day = calendar.monthrange(year, month)[1]
+            if day > max_day:
+                # This month doesn't have this day, try next month
+                month += 1
+                if month > 12:
+                    month = 1
+                    year += 1
+
+            target_time = datetime(
+                year, month, day, hour, minute, second=0, microsecond=0, tzinfo=TZ
+            )
+
+            # If target time has passed, move to next month
+            if target_time <= now:
+                month += 1
+                if month > 12:
+                    month = 1
+                    year += 1
+
+                # Check again if next month has this day
+                max_day = calendar.monthrange(year, month)[1]
+                if day > max_day:
+                    # Next month doesn't have this day either, try the month after
+                    month += 1
+                    if month > 12:
+                        month = 1
+                        year += 1
+
+                target_time = datetime(
+                    year, month, day, hour, minute, second=0, microsecond=0, tzinfo=TZ
+                )
+
+            schedule = {"type": "once", "run_at": target_time.isoformat()}
+            desc = target_time.strftime("%Y年%m月%d日 %H:%M")
+            return (schedule, desc)
+
+        except ValueError:
+            # Invalid date
+            return None
+
     return None
 
 
@@ -735,5 +873,23 @@ def calculate_initial_run_at(schedule: Dict[str, Any]) -> Optional[str]:
             candidate = build_run(year, month)
             if candidate > now:
                 return candidate.isoformat()
+
+    elif schedule_type == "daily":
+        time_str = schedule.get("time")
+
+        if time_str is None:
+            return None
+
+        now = get_current_time()
+        hour, minute = map(int, time_str.split(":"))
+
+        # Today at the specified time
+        next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        # If already passed, move to tomorrow
+        if next_run <= now:
+            next_run += timedelta(days=1)
+
+        return next_run.isoformat()
 
     return None

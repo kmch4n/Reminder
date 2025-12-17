@@ -338,6 +338,21 @@ def calculate_next_run_at(
 
         return next_run.isoformat()
 
+    elif schedule_type == "daily":
+        time_str = schedule.get("time")
+
+        if time_str is None:
+            return None
+
+        # Parse target time
+        hour, minute = map(int, time_str.split(":"))
+
+        # Next day at the same time
+        next_run = current_run + timedelta(days=1)
+        next_run = next_run.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        return next_run.isoformat()
+
     return None
 
 

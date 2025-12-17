@@ -87,7 +87,9 @@ def format_reminder_list(user_id: str) -> str:
             time_str = "不明"
 
         # Add schedule type indicator
-        if schedule_type == "weekly":
+        if schedule_type == "daily":
+            type_indicator = "🔁 毎日"
+        elif schedule_type == "weekly":
             type_indicator = "🔁 毎週"
         elif schedule_type == "monthly":
             type_indicator = "🔁 毎月"
@@ -124,6 +126,7 @@ def create_reminder_list_flex(user_id: str) -> Optional[Dict[str, Any]]:
     # Group reminders by schedule type
     reminders_by_type = {
         "once": [],
+        "daily": [],
         "weekly": [],
         "monthly": [],
     }
@@ -147,6 +150,11 @@ def create_reminder_list_flex(user_id: str) -> Optional[Dict[str, Any]]:
             header_color = "#2d5016"
             bar_color = "#70AD47"
             type_icon = "⏰"
+        elif schedule_type == "daily":
+            title = "🔁 毎日"
+            header_color = "#1e3a5f"
+            bar_color = "#5B9BD5"
+            type_icon = "🔁"
         elif schedule_type == "weekly":
             title = "🔁 毎週"
             header_color = "#1e3a5f"
@@ -271,7 +279,7 @@ def create_reminder_list_flex(user_id: str) -> Optional[Dict[str, Any]]:
         }
 
     # Create bubbles in order: once, weekly, monthly
-    for schedule_type in ["once", "weekly", "monthly"]:
+    for schedule_type in ["once", "daily", "weekly", "monthly"]:
         if reminders_by_type[schedule_type]:
             bubbles.append(
                 create_bubble(schedule_type, reminders_by_type[schedule_type])
@@ -326,7 +334,9 @@ def format_reminder_list_for_deletion(user_id: str) -> tuple:
             time_str = "不明"
 
         # Add schedule type indicator
-        if schedule_type == "weekly":
+        if schedule_type == "daily":
+            type_indicator = "🔁 毎日"
+        elif schedule_type == "weekly":
             type_indicator = "🔁 毎週"
         elif schedule_type == "monthly":
             type_indicator = "🔁 毎月"
@@ -369,6 +379,7 @@ def create_reminder_deletion_flex(user_id: str) -> Optional[tuple]:
     # Group reminders by schedule type (while maintaining sort order)
     reminders_by_type = {
         "once": [],
+        "daily": [],
         "weekly": [],
         "monthly": [],
     }
@@ -392,6 +403,11 @@ def create_reminder_deletion_flex(user_id: str) -> Optional[tuple]:
             header_color = "#5f1111"  # Darker red for deletion
             bar_color = "#E74C3C"  # Red for deletion
             type_icon = "⏰"
+        elif schedule_type == "daily":
+            title = "🔁 毎日"
+            header_color = "#5f1111"
+            bar_color = "#E74C3C"
+            type_icon = "🔁"
         elif schedule_type == "weekly":
             title = "🔁 毎週"
             header_color = "#5f1111"
@@ -560,7 +576,7 @@ def create_reminder_deletion_flex(user_id: str) -> Optional[tuple]:
         }
 
     # Create bubbles in order: once, weekly, monthly
-    for schedule_type in ["once", "weekly", "monthly"]:
+    for schedule_type in ["once", "daily", "weekly", "monthly"]:
         if reminders_by_type[schedule_type]:
             bubbles.append(
                 create_bubble(schedule_type, reminders_by_type[schedule_type])
