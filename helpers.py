@@ -16,7 +16,10 @@ from time_parser import calculate_initial_run_at, get_current_time
 
 
 def create_reminder_object(
-    user_id: str, message: str, schedule: Dict[str, Any]
+    user_id: str,
+    message: str,
+    schedule: Dict[str, Any],
+    extra_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Create a complete reminder object.
@@ -32,7 +35,7 @@ def create_reminder_object(
     next_run_at = calculate_initial_run_at(schedule)
     created_at = get_current_time().isoformat()
 
-    return {
+    reminder = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
         "text": message,
@@ -41,6 +44,9 @@ def create_reminder_object(
         "created_at": created_at,
         "status": "pending",
     }
+    if extra_fields:
+        reminder.update(extra_fields)
+    return reminder
 
 
 # ============================================================================

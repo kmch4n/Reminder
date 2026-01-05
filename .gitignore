@@ -130,6 +130,7 @@ CLAUDE.md
 data/reminders.json
 data/archive.json
 data/settings.json
+data/last_notifications.json
 *.log
 .DS_Store
 

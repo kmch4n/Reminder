@@ -7,6 +7,9 @@ Interactive reminder registration system with natural language time parsing.
 
 import os
 import sys
+import re
+from datetime import datetime, timedelta
+from typing import Optional, Any
 
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
@@ -29,6 +32,7 @@ from time_parser import (
     create_time_quick_reply,
     create_main_menu_quick_reply,
     create_delete_quick_reply,
+    get_current_time,
 )
 from session import (
     get_user_session,
@@ -47,6 +51,10 @@ from helpers import (
     create_reminder_deletion_flex,
     delete_reminder_by_id,
     delete_all_reminders,
+)
+from notification_history import (
+    get_last_notification,
+    set_last_notification,
 )
 
 # Load environment variables
@@ -73,6 +81,11 @@ if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     sys.exit(1)
 
 
+SNOOZE_KEYWORDS = ("リマインド", "スヌーズ", "もう一度")
+MAX_SNOOZE_MINUTES = 24 * 60
+SNOOZE_HISTORY_EXPIRY_MINUTES = 120
+
+
 def load_settings():
     """
     Load settings from data/settings.json.
@@ -97,6 +110,87 @@ def load_settings():
     except json.JSONDecodeError:
         print(f"Warning: Invalid JSON in {settings_file}, using defaults")
         return default_settings
+
+
+def parse_snooze_duration(text: str) -> Optional[timedelta]:
+    """Detect snooze commands such as '10分リマインド' or '1時間スヌーズ'."""
+    normalized = text.strip()
+    if not normalized:
+        return None
+
+    if not any(keyword in normalized for keyword in SNOOZE_KEYWORDS):
+        return None
+
+    hours = 0
+    minutes = 0
+    hour_match = re.search(r"(\d+)\s*時間", normalized)
+    minute_match = re.search(r"(\d+)\s*分", normalized)
+
+    if hour_match:
+        hours = int(hour_match.group(1))
+    if minute_match:
+        minutes = int(minute_match.group(1))
+
+    total_minutes = hours * 60 + minutes
+    if total_minutes <= 0 or total_minutes > MAX_SNOOZE_MINUTES:
+        return None
+
+    return timedelta(minutes=total_minutes)
+
+
+def format_display_time(dt: datetime) -> str:
+    """Format datetime for user-facing messages."""
+    return dt.strftime("%Y年%m月%d日 %H:%M")
+
+
+def handle_snooze_request(user_id: str, snooze_delta: timedelta) -> tuple[str, Optional[Any]]:
+    """Add a snoozed reminder based on the user's last notification."""
+    quick_reply = create_main_menu_quick_reply()
+
+    last_notification = get_last_notification(user_id)
+    if not last_notification:
+        return ("直近のリマインダーが見つかりませんでした。", quick_reply)
+
+    reminder_text = last_notification.get("text")
+    if not reminder_text:
+        return ("再通知できるリマインダーがありません。", quick_reply)
+
+    sent_at_str = last_notification.get("sent_at")
+    sent_at = None
+    if sent_at_str:
+        try:
+            sent_at = datetime.fromisoformat(sent_at_str)
+        except ValueError:
+            sent_at = None
+
+    now = get_current_time()
+    if sent_at and now - sent_at > timedelta(minutes=SNOOZE_HISTORY_EXPIRY_MINUTES):
+        return ("最新のリマインダーから時間が経過したため、スヌーズできません。", quick_reply)
+
+    snooze_run_at = now + snooze_delta
+    schedule = {"type": "once", "run_at": snooze_run_at.isoformat()}
+
+    extra_fields = {"is_snooze": True}
+    if last_notification.get("reminder_id"):
+        extra_fields["snoozed_from"] = last_notification["reminder_id"]
+
+    try:
+        reminder = create_reminder_object(
+            user_id, reminder_text, schedule, extra_fields=extra_fields
+        )
+        add_reminder_to_file(reminder)
+    except Exception as exc:
+        app.logger.error(f"Error scheduling snooze reminder: {exc}")
+        return ("❌ 再通知の設定に失敗しました。", quick_reply)
+
+    updated_record = last_notification.copy()
+    updated_record["pending_snooze_id"] = reminder["id"]
+    updated_record["pending_snooze_run_at"] = snooze_run_at.isoformat()
+    set_last_notification(user_id, updated_record)
+
+    desc = format_display_time(snooze_run_at)
+    reply_text = f"⏰ 「{reminder_text}」を{desc}に再通知します。"
+    return (reply_text, quick_reply)
 
 
 # Initialize Flask app
@@ -262,6 +356,20 @@ def handle_text_message(event: MessageEvent):
                         ],
                     )
                 )
+        return
+
+    snooze_delta = parse_snooze_duration(received_text)
+    if snooze_delta:
+        reply_text, quick_reply = handle_snooze_request(user_id, snooze_delta)
+
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
+                )
+            )
         return
 
     # Check if user has an active session

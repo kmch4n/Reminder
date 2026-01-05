@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from notification_history import set_last_notification
+
 # Load environment variables
 try:
     from dotenv import load_dotenv
@@ -44,6 +46,13 @@ TZ = ZoneInfo(TIMEZONE)
 
 # LINE API endpoint
 LINE_PUSH_MESSAGE_URL = "https://api.line.me/v2/bot/message/push"
+
+# Quick reply snooze presets (label, text sent to bot)
+SNOOZE_PRESETS = [
+    ("5分後", "5分スヌーズ"),
+    ("10分後", "10分スヌーズ"),
+    ("30分後", "30分スヌーズ"),
+]
 
 # Execution grace period (seconds)
 # Reminders older than this will be archived without execution
@@ -193,17 +202,34 @@ def append_to_archive(completed_reminders: List[Dict[str, Any]]) -> None:
 
 
 # ============================================================================
+# Notification History Helpers
+# ============================================================================
+
+
+def record_last_notification(user_id: str, reminder: Dict[str, Any], sent_time: datetime):
+    """Record the last notification for snooze handling."""
+    record = {
+        "reminder_id": reminder.get("id"),
+        "text": reminder.get("text", ""),
+        "sent_at": sent_time.isoformat(),
+        "schedule_type": reminder.get("schedule", {}).get("type"),
+        "snoozed_from": reminder.get("snoozed_from"),
+    }
+    set_last_notification(user_id, record)
+
+
+# ============================================================================
 # LINE Messaging API Functions
 # ============================================================================
 
 
-def send_line_push_message(user_id: str, text: str) -> bool:
+def send_line_push_message(user_id: str, message_text: str) -> bool:
     """
     Send a push message to a LINE user with quick reply menu.
 
     Args:
         user_id: LINE user ID
-        text: Message text to send
+        message_text: Message text to send
 
     Returns:
         True if successful, False otherwise.
@@ -213,9 +239,22 @@ def send_line_push_message(user_id: str, text: str) -> bool:
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
     }
 
-    # Create quick reply menu
-    quick_reply = {
-        "items": [
+    quick_reply_items = []
+
+    for label, preset_text in SNOOZE_PRESETS:
+        quick_reply_items.append(
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": f"{label}に再通知",
+                    "text": preset_text,
+                },
+            }
+        )
+
+    quick_reply_items.extend(
+        [
             {
                 "type": "action",
                 "action": {
@@ -241,11 +280,15 @@ def send_line_push_message(user_id: str, text: str) -> bool:
                 },
             },
         ]
-    }
+    )
+
+    quick_reply = {"items": quick_reply_items}
 
     payload = {
         "to": user_id,
-        "messages": [{"type": "text", "text": text, "quickReply": quick_reply}],
+        "messages": [
+            {"type": "text", "text": message_text, "quickReply": quick_reply}
+        ],
     }
 
     try:
@@ -421,6 +464,7 @@ def process_due_reminders(reminders: List[Dict[str, Any]]) -> List[Dict[str, Any
             success = send_line_push_message(user_id, message)
 
             if success:
+                record_last_notification(user_id, reminder, current_time)
                 # Update reminder based on schedule type
                 schedule = reminder.get("schedule", {})
                 schedule_type = schedule.get("type")
