@@ -875,7 +875,59 @@ def create_main_menu_quick_reply() -> QuickReply:
                 action=MessageAction(label="リマインド一覧", text="リマインド一覧")
             ),
             QuickReplyItem(
+                action=MessageAction(label="リマインド編集", text="リマインド編集")
+            ),
+            QuickReplyItem(
                 action=MessageAction(label="リマインド削除", text="リマインド削除")
+            ),
+        ]
+    )
+
+
+def create_edit_quick_reply(reminder_count: int) -> QuickReply:
+    """
+    Create quick reply buttons for reminder editing (target selection).
+
+    Args:
+        reminder_count: Number of reminders to display buttons for
+
+    Returns:
+        QuickReply object with edit target selection options.
+    """
+    items = []
+
+    # Add individual selection buttons (limit to first 10 reminders)
+    display_count = min(reminder_count, 10)
+    for i in range(1, display_count + 1):
+        items.append(
+            QuickReplyItem(action=MessageAction(label=f"{i}を編集", text=f"{i}"))
+        )
+
+    # Add cancel button
+    items.append(
+        QuickReplyItem(action=MessageAction(label="キャンセル", text="キャンセル"))
+    )
+
+    return QuickReply(items=items)
+
+
+def create_edit_choice_quick_reply() -> QuickReply:
+    """
+    Create quick reply buttons for edit choice selection.
+
+    Returns:
+        QuickReply object with edit choice options (text or time).
+    """
+    return QuickReply(
+        items=[
+            QuickReplyItem(
+                action=MessageAction(label="内容を編集", text="内容を編集")
+            ),
+            QuickReplyItem(
+                action=MessageAction(label="時刻を編集", text="時刻を編集")
+            ),
+            QuickReplyItem(
+                action=MessageAction(label="キャンセル", text="キャンセル")
             ),
         ]
     )

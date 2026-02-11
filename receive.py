@@ -29,8 +29,11 @@ from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from storage import add_reminder_to_file
 from time_parser import (
     parse_natural_time,
+    calculate_initial_run_at,
     create_time_quick_reply,
     create_main_menu_quick_reply,
+    create_edit_quick_reply,
+    create_edit_choice_quick_reply,
     create_delete_quick_reply,
     get_current_time,
     log_parse_error,
@@ -41,6 +44,10 @@ from session import (
     start_waiting_for_time_session,
     start_waiting_for_delete_id_session,
     start_waiting_for_delete_all_confirmation_session,
+    start_waiting_for_edit_id_session,
+    start_waiting_for_edit_choice_session,
+    start_waiting_for_edit_text_session,
+    start_waiting_for_edit_time_session,
     increment_fail_count,
     MAX_FAIL_COUNT,
 )
@@ -49,9 +56,11 @@ from helpers import (
     format_reminder_list,
     create_reminder_list_flex,
     format_reminder_list_for_deletion,
+    format_reminder_list_for_edit,
     create_reminder_deletion_flex,
     delete_reminder_by_id,
     delete_all_reminders,
+    update_reminder_by_id,
 )
 from notification_history import (
     get_last_notification,
@@ -359,6 +368,29 @@ def handle_text_message(event: MessageEvent):
                 )
         return
 
+    # Check for reminder edit command
+    if received_text == "リマインド編集":
+        quick_reply = create_main_menu_quick_reply()
+
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+
+            reply_text, reminders = format_reminder_list_for_edit(user_id)
+
+            if reminders:
+                start_waiting_for_edit_id_session(user_id, reminders)
+                quick_reply = create_edit_quick_reply(len(reminders))
+
+            line_bot_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[
+                        TextMessage(text=reply_text, quick_reply=quick_reply)
+                    ],
+                )
+            )
+        return
+
     snooze_delta = parse_snooze_duration(received_text)
     if snooze_delta:
         reply_text, quick_reply = handle_snooze_request(user_id, snooze_delta)
@@ -556,6 +588,193 @@ def handle_text_message(event: MessageEvent):
             else:
                 reply_text = f"⚠️ 「削除」または「キャンセル」と送信してください。（{fail_count}/{MAX_FAIL_COUNT}回目）"
                 quick_reply = None
+
+    elif session and session.get("state") == "waiting_for_edit_id":
+        # Check for cancel command
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
+            clear_user_session(user_id)
+            reply_text = "リマインダーの編集をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        else:
+            reminders = session.get("reminders", [])
+
+            try:
+                edit_index = int(received_text) - 1
+
+                if 0 <= edit_index < len(reminders):
+                    selected_reminder = reminders[edit_index]
+                    start_waiting_for_edit_choice_session(user_id, selected_reminder)
+
+                    reminder_text = selected_reminder.get("text", "")
+                    next_run_at_str = selected_reminder.get("next_run_at", "")
+                    try:
+                        next_run_at = datetime.fromisoformat(next_run_at_str)
+                        current_time_str = next_run_at.strftime("%Y年%m月%d日 %H:%M")
+                    except (ValueError, AttributeError):
+                        current_time_str = "不明"
+
+                    reply_text = (
+                        f"「{reminder_text}」\n"
+                        f"時刻: {current_time_str}\n\n"
+                        "何を編集しますか？"
+                    )
+                    quick_reply = create_edit_choice_quick_reply()
+                else:
+                    fail_count = increment_fail_count(user_id)
+
+                    if fail_count >= MAX_FAIL_COUNT:
+                        clear_user_session(user_id)
+                        reply_text = (
+                            f"⚠️ {MAX_FAIL_COUNT}回失敗したため、編集を中止しました。\n"
+                            "最初からやり直してください。"
+                        )
+                        quick_reply = create_main_menu_quick_reply()
+                    else:
+                        reply_text = (
+                            f"⚠️ 無効な番号です。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                            f"1〜{len(reminders)}の番号を送信してください。\n"
+                            "編集をやめる場合は「キャンセル」と送信してください。"
+                        )
+                        quick_reply = create_edit_quick_reply(len(reminders))
+            except ValueError:
+                fail_count = increment_fail_count(user_id)
+
+                if fail_count >= MAX_FAIL_COUNT:
+                    clear_user_session(user_id)
+                    reply_text = (
+                        f"⚠️ {MAX_FAIL_COUNT}回失敗したため、編集を中止しました。\n"
+                        "最初からやり直してください。"
+                    )
+                    quick_reply = create_main_menu_quick_reply()
+                else:
+                    reply_text = (
+                        f"⚠️ 数字を送信してください。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                        f"1〜{len(reminders)}の番号を送信してください。\n"
+                        "編集をやめる場合は「キャンセル」と送信してください。"
+                    )
+                    quick_reply = create_edit_quick_reply(len(reminders))
+
+    elif session and session.get("state") == "waiting_for_edit_choice":
+        reminder = session.get("reminder", {})
+
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
+            clear_user_session(user_id)
+            reply_text = "リマインダーの編集をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        elif received_text == "内容を編集":
+            start_waiting_for_edit_text_session(user_id, reminder)
+            current_text = reminder.get("text", "")
+            reply_text = (
+                f"新しい内容を入力してください。\n\n"
+                f"現在の内容: 「{current_text}」"
+            )
+            quick_reply = None
+        elif received_text == "時刻を編集":
+            start_waiting_for_edit_time_session(user_id, reminder)
+            next_run_at_str = reminder.get("next_run_at", "")
+            try:
+                next_run_at = datetime.fromisoformat(next_run_at_str)
+                current_time_str = next_run_at.strftime("%Y年%m月%d日 %H:%M")
+            except (ValueError, AttributeError):
+                current_time_str = "不明"
+
+            reply_text = (
+                f"新しい時刻を入力してください。\n\n"
+                f"現在の時刻: {current_time_str}"
+            )
+            quick_reply = create_time_quick_reply()
+        else:
+            fail_count = increment_fail_count(user_id)
+
+            if fail_count >= MAX_FAIL_COUNT:
+                clear_user_session(user_id)
+                reply_text = (
+                    f"⚠️ {MAX_FAIL_COUNT}回失敗したため、編集を中止しました。\n"
+                    "最初からやり直してください。"
+                )
+                quick_reply = create_main_menu_quick_reply()
+            else:
+                reply_text = (
+                    f"⚠️ 「内容を編集」「時刻を編集」または「キャンセル」と送信してください。"
+                    f"（{fail_count}/{MAX_FAIL_COUNT}回目）"
+                )
+                quick_reply = create_edit_choice_quick_reply()
+
+    elif session and session.get("state") == "waiting_for_edit_text":
+        reminder = session.get("reminder", {})
+
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
+            clear_user_session(user_id)
+            reply_text = "リマインダーの編集をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        else:
+            reminder_id = reminder.get("id")
+            new_text = received_text.strip()
+
+            if update_reminder_by_id(reminder_id, {"text": new_text}):
+                reply_text = f"✅ リマインダーの内容を更新しました。\n\n内容: 「{new_text}」"
+            else:
+                reply_text = "❌ リマインダーの更新に失敗しました。"
+
+            clear_user_session(user_id)
+            quick_reply = create_main_menu_quick_reply()
+
+    elif session and session.get("state") == "waiting_for_edit_time":
+        reminder = session.get("reminder", {})
+
+        if received_text.lower() in ["キャンセル", "cancel", "やめる"]:
+            clear_user_session(user_id)
+            reply_text = "リマインダーの編集をキャンセルしました。"
+            quick_reply = create_main_menu_quick_reply()
+        else:
+            parse_result = parse_natural_time(received_text)
+
+            if parse_result is not None:
+                schedule, time_desc = parse_result
+                next_run_at = calculate_initial_run_at(schedule)
+
+                reminder_id = reminder.get("id")
+                updates = {
+                    "schedule": schedule,
+                    "next_run_at": next_run_at,
+                }
+
+                if update_reminder_by_id(reminder_id, updates):
+                    reminder_text = reminder.get("text", "")
+                    reply_text = (
+                        f"✅ リマインダーの時刻を更新しました。\n\n"
+                        f"内容: 「{reminder_text}」\n"
+                        f"新しい時刻: {time_desc}"
+                    )
+                else:
+                    reply_text = "❌ リマインダーの更新に失敗しました。"
+
+                clear_user_session(user_id)
+                quick_reply = create_main_menu_quick_reply()
+            else:
+                log_parse_error(user_id, received_text)
+                fail_count = increment_fail_count(user_id)
+
+                if fail_count >= MAX_FAIL_COUNT:
+                    clear_user_session(user_id)
+                    reply_text = (
+                        f"⚠️ {MAX_FAIL_COUNT}回失敗したため、編集を中止しました。\n"
+                        "最初からやり直してください。"
+                    )
+                    quick_reply = create_main_menu_quick_reply()
+                else:
+                    reply_text = (
+                        f"⚠️ 時刻の形式を認識できませんでした。（{fail_count}/{MAX_FAIL_COUNT}回目）\n\n"
+                        "指定された時刻が既に過ぎている可能性があります。\n\n"
+                        "以下の形式で送信してください:\n"
+                        "• 10分後 / 2時間後\n"
+                        "• 22:00 / 14時 / 午後3時\n"
+                        "• 今日の22:00 / 明日午後3時\n"
+                        "• 毎週日曜日 20時\n"
+                        "• 2025年5月3日 / 11/20\n\n"
+                        "編集をやめる場合は「キャンセル」と送信してください。"
+                    )
+                    quick_reply = create_time_quick_reply()
 
     else:
         # Check for reminder setup command

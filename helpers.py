@@ -600,6 +600,86 @@ def create_reminder_deletion_flex(user_id: str) -> Optional[tuple]:
     return (flex_contents, user_reminders)
 
 
+def update_reminder_by_id(reminder_id: str, updates: Dict[str, Any]) -> bool:
+    """
+    Update a reminder by its ID.
+
+    Args:
+        reminder_id: Reminder ID to update
+        updates: Dictionary of fields to update
+
+    Returns:
+        True if updated successfully, False otherwise.
+    """
+    reminders = load_reminders_from_file()
+
+    for reminder in reminders:
+        if reminder.get("id") == reminder_id:
+            reminder.update(updates)
+            from storage import save_reminders_to_file
+
+            save_reminders_to_file(reminders)
+            return True
+
+    return False
+
+
+def format_reminder_list_for_edit(user_id: str) -> tuple:
+    """
+    Format user's reminder list for editing with numbered IDs.
+
+    Args:
+        user_id: LINE user ID
+
+    Returns:
+        Tuple of (formatted text, list of reminders).
+    """
+    reminders = load_reminders_from_file()
+    user_reminders = [
+        r
+        for r in reminders
+        if r.get("user_id") == user_id and r.get("status") == "pending"
+    ]
+
+    if not user_reminders:
+        return ("📋 編集できるリマインダーはありません。", [])
+
+    # Sort by next_run_at
+    user_reminders.sort(key=lambda r: r.get("next_run_at", ""))
+
+    lines = ["📋 編集するリマインダーの番号を送信してください\n"]
+
+    for i, reminder in enumerate(user_reminders, 1):
+        text = reminder.get("text", "")
+        next_run_at_str = reminder.get("next_run_at", "")
+        schedule = reminder.get("schedule", {})
+        schedule_type = schedule.get("type", "")
+
+        # Format datetime
+        try:
+            next_run_at = datetime.fromisoformat(next_run_at_str)
+            time_str = next_run_at.strftime("%m/%d %H:%M")
+        except (ValueError, AttributeError):
+            time_str = "不明"
+
+        # Add schedule type indicator
+        if schedule_type == "daily":
+            type_indicator = "🔁 毎日"
+        elif schedule_type == "weekly":
+            type_indicator = "🔁 毎週"
+        elif schedule_type == "monthly":
+            type_indicator = "🔁 毎月"
+        else:
+            type_indicator = "📅"
+
+        lines.append(f"{i}. {type_indicator} {time_str}")
+        lines.append(f"   {text}\n")
+
+    lines.append("\n編集をやめる場合は「キャンセル」と送信してください。")
+
+    return ("\n".join(lines), user_reminders)
+
+
 def delete_reminder_by_id(reminder_id: str) -> bool:
     """
     Delete a reminder by its ID.

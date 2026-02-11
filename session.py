@@ -43,6 +43,42 @@ def start_waiting_for_delete_all_confirmation_session(user_id: str) -> None:
     }
 
 
+def start_waiting_for_edit_id_session(user_id: str, reminders: list) -> None:
+    """Start a session waiting for edit target ID input."""
+    user_sessions[user_id] = {
+        "state": "waiting_for_edit_id",
+        "reminders": reminders,
+        "fail_count": 0,
+    }
+
+
+def start_waiting_for_edit_choice_session(user_id: str, reminder: dict) -> None:
+    """Start a session waiting for edit choice (text or time)."""
+    user_sessions[user_id] = {
+        "state": "waiting_for_edit_choice",
+        "reminder": reminder,
+        "fail_count": 0,
+    }
+
+
+def start_waiting_for_edit_text_session(user_id: str, reminder: dict) -> None:
+    """Start a session waiting for new text input."""
+    user_sessions[user_id] = {
+        "state": "waiting_for_edit_text",
+        "reminder": reminder,
+        "fail_count": 0,
+    }
+
+
+def start_waiting_for_edit_time_session(user_id: str, reminder: dict) -> None:
+    """Start a session waiting for new time input."""
+    user_sessions[user_id] = {
+        "state": "waiting_for_edit_time",
+        "reminder": reminder,
+        "fail_count": 0,
+    }
+
+
 def increment_fail_count(user_id: str) -> int:
     """Increment and return the fail count for a user session."""
     if user_id in user_sessions:
