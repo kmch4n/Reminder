@@ -597,7 +597,10 @@ if __name__ == "__main__":
     flask_log = flask_logging.getLogger("werkzeug")
     flask_log.setLevel(flask_logging.ERROR)
 
+    # Port configuration (8001 to avoid conflict with kcb_api on 8000)
+    port = int(os.getenv("REMINDER_PORT", "8001"))
+
     print("Starting Reminder Bot webhook server...")
     print(f"Public URL: {PUBLIC_URL}")
-    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE}")
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    print(f"Data: {DATA_DIR} | TZ: {TIMEZONE} | Port: {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)
