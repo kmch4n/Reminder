@@ -2,10 +2,12 @@
 time_parser.py - Natural language time parsing for Japanese reminders
 """
 
+import logging
 import os
 import re
 import calendar
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 from zoneinfo import ZoneInfo
 
@@ -13,9 +15,72 @@ from linebot.v3.messaging import QuickReply, QuickReplyItem, MessageAction
 
 # Configuration
 TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
+DEFAULT_TIME = os.getenv("REMINDER_DEFAULT_TIME", "09:00")
 
 # Timezone object
 TZ = ZoneInfo(TIMEZONE)
+
+
+# ============================================================================
+# Parse Error Logging
+# ============================================================================
+
+
+def setup_parse_error_logger() -> logging.Logger:
+    """Setup a dedicated logger for parse errors."""
+    logger = logging.getLogger("parse_errors")
+    logger.setLevel(logging.INFO)
+
+    # Avoid duplicate handlers
+    if logger.handlers:
+        return logger
+
+    # Create logs directory if it doesn't exist
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+
+    # File handler
+    handler = logging.FileHandler(log_dir / "parse_errors.log", encoding="utf-8")
+    handler.setLevel(logging.INFO)
+
+    # Format: timestamp | message
+    formatter = logging.Formatter("%(asctime)s | %(message)s")
+    handler.setFormatter(formatter)
+
+    logger.addHandler(handler)
+    return logger
+
+
+parse_error_logger = setup_parse_error_logger()
+
+
+def log_parse_error(user_id: str, input_text: str) -> None:
+    """
+    Log a parse error for unrecognized time format.
+
+    Args:
+        user_id: LINE user ID
+        input_text: The input text that failed to parse
+    """
+    # Sanitize input (replace newlines, limit length)
+    sanitized_text = input_text.replace("\n", " ").replace("\r", "")[:200]
+    parse_error_logger.info(f"{user_id} | {sanitized_text}")
+
+
+def get_default_time() -> Tuple[int, int]:
+    """Get default hour and minute from environment variable."""
+    try:
+        parts = DEFAULT_TIME.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        if 0 <= hour < 24 and 0 <= minute < 60:
+            return (hour, minute)
+    except (ValueError, IndexError):
+        pass
+    return (9, 0)  # Fallback to 09:00
+
+
+DEFAULT_HOUR, DEFAULT_MINUTE = get_default_time()
 
 # ============================================================================
 # Time Utility Functions
@@ -156,7 +221,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         return (schedule, desc)
 
     # Pattern 0c: N日後 HH:MM (relative days with time)
-    match = re.match(r"(\d+)日後\s+(.+)", text)
+    match = re.match(r"(\d+)日後\s*(.+)", text)
     if match:
         days = int(match.group(1))
         time_part = match.group(2)
@@ -178,7 +243,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = target_time.strftime("%Y年%m月%d日 %H:%M")
         return (schedule, desc)
 
-    # Pattern 0d: N日後 (relative days, default 9:00)
+    # Pattern 0d: N日後 (relative days, default time)
     match = re.match(r"(\d+)日後$", text)
     if match:
         days = int(match.group(1))
@@ -187,10 +252,12 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             return None
 
         target_time = now + timedelta(days=days)
-        target_time = target_time.replace(hour=9, minute=0, second=0, microsecond=0)
+        target_time = target_time.replace(
+            hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
+        )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
 
     # Pattern 1a: 毎日 時刻 (recurring daily)
@@ -406,6 +473,42 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = target_time.strftime("%Y年%m月%d日 %H:%M")
         return (schedule, desc)
 
+    # Pattern 4a: 明後日のみ (時刻なし、デフォルト時刻を使用)
+    if text == "明後日":
+        target_time = now + timedelta(days=2)
+        target_time = target_time.replace(
+            hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
+        )
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        return (schedule, desc)
+
+    # Pattern 5a: 明日のみ (時刻なし、デフォルト時刻を使用)
+    if text == "明日":
+        target_time = now + timedelta(days=1)
+        target_time = target_time.replace(
+            hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
+        )
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        return (schedule, desc)
+
+    # Pattern 6a: 今日のみ (時刻なし、デフォルト時刻を使用)
+    if text == "今日":
+        target_time = now.replace(
+            hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
+        )
+
+        # If time has passed today, move to tomorrow
+        if target_time <= now:
+            target_time += timedelta(days=1)
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        return (schedule, desc)
+
     # Pattern 7: 時刻のみ (HH:MM, HH時, 午後3時など) → 今日のその時刻
     time_tuple = parse_time_with_ampm(text)
     if time_tuple is not None:
@@ -421,7 +524,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = target_time.strftime("%Y年%m月%d日 %H:%M")
         return (schedule, desc)
 
-    # Pattern 8: 日付のみ YYYY-MM-DD → デフォルト9:00
+    # Pattern 8: 日付のみ YYYY-MM-DD → デフォルト時刻
     match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})$", text)
     if match:
         year = int(match.group(1))
@@ -429,14 +532,18 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         day = int(match.group(3))
 
         try:
-            target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
             schedule = {"type": "once", "run_at": target_time.isoformat()}
-            desc = target_time.strftime("%Y年%m月%d日 09:00")
+            desc = target_time.strftime(
+                f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+            )
             return (schedule, desc)
         except ValueError:
             return None
 
-    # Pattern 9: 日付のみ MM/DD → デフォルト9:00
+    # Pattern 9: 日付のみ MM/DD → デフォルト時刻
     match = re.match(r"(\d{1,2})/(\d{1,2})$", text)
     if match:
         month = int(match.group(1))
@@ -445,17 +552,23 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         # If the date has passed this year, use next year
         try:
-            target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
             if target_time <= now:
-                target_time = datetime(year + 1, month, day, 9, 0, tzinfo=TZ)
+                target_time = datetime(
+                    year + 1, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+                )
 
             schedule = {"type": "once", "run_at": target_time.isoformat()}
-            desc = target_time.strftime("%Y年%m月%d日 09:00")
+            desc = target_time.strftime(
+                f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+            )
             return (schedule, desc)
         except ValueError:
             return None
 
-    # Pattern 10: 日付のみ M月D日 → デフォルト9:00
+    # Pattern 10: 日付のみ M月D日 → デフォルト時刻
     match = re.match(r"(\d{1,2})月(\d{1,2})日?$", text)
     if match:
         month = int(match.group(1))
@@ -464,17 +577,23 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         # If the date has passed this year, use next year
         try:
-            target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
             if target_time <= now:
-                target_time = datetime(year + 1, month, day, 9, 0, tzinfo=TZ)
+                target_time = datetime(
+                    year + 1, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+                )
 
             schedule = {"type": "once", "run_at": target_time.isoformat()}
-            desc = target_time.strftime("%Y年%m月%d日 09:00")
+            desc = target_time.strftime(
+                f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+            )
             return (schedule, desc)
         except ValueError:
             return None
 
-    # Pattern 11: YYYY年M月D日 (20XX年5月3日) → デフォルト9:00
+    # Pattern 11: YYYY年M月D日 (20XX年5月3日) → デフォルト時刻
     match = re.match(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?$", text)
     if match:
         year = int(match.group(1))
@@ -487,20 +606,24 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             return None
 
         try:
-            target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
 
             # Check if time is in the past
             if is_past_time(target_time):
                 return None
 
             schedule = {"type": "once", "run_at": target_time.isoformat()}
-            desc = target_time.strftime("%Y年%m月%d日 09:00")
+            desc = target_time.strftime(
+                f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+            )
             return (schedule, desc)
         except ValueError:
             return None
 
-    # Pattern 12: YYYY年M月D日 時刻付き (2025年5月3日 14:00)
-    match = re.match(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s+(.+)", text)
+    # Pattern 12: YYYY年M月D日 時刻付き (2025年5月3日 14:00, 2025年5月3日14:00)
+    match = re.match(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s*(.+)", text)
     if match:
         year = int(match.group(1))
         month = int(match.group(2))
@@ -532,7 +655,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             return None
 
     # Pattern 13: YYYY-MM-DD HH:MM (structured format with time)
-    match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+    match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{1,2})", text)
     if match:
         year = int(match.group(1))
         month = int(match.group(2))
@@ -558,8 +681,8 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
-    # Pattern 14: MM/DD HH:MM (e.g., "11/25 18:00")
-    match = re.match(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+    # Pattern 14: MM/DD HH:MM (e.g., "11/25 18:00", "11/2518:00")
+    match = re.match(r"(\d{1,2})/(\d{1,2})\s*(\d{1,2}):(\d{1,2})", text)
     if match:
         month = int(match.group(1))
         day = int(match.group(2))
@@ -580,8 +703,8 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
-    # Pattern 15: MM/DD HH時 or MM/DD 時刻 (e.g., "11/24 18時", "11/24 午後3時")
-    match = re.match(r"(\d{1,2})/(\d{1,2})\s+(.+)", text)
+    # Pattern 15: MM/DD HH時 or MM/DD 時刻 (e.g., "11/24 18時", "11/2418時")
+    match = re.match(r"(\d{1,2})/(\d{1,2})\s*(.+)", text)
     if match:
         month = int(match.group(1))
         day = int(match.group(2))
@@ -607,8 +730,8 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
-    # Pattern 16: MM月DD日 時刻 (e.g., "11月25日 18時", "11月25日 午後3時")
-    match = re.match(r"(\d{1,2})月(\d{1,2})日?\s+(.+)", text)
+    # Pattern 16: MM月DD日 時刻 (e.g., "11月25日 18時", "11月25日18時")
+    match = re.match(r"(\d{1,2})月(\d{1,2})日?\s*(.+)", text)
     if match:
         month = int(match.group(1))
         day = int(match.group(2))
@@ -634,8 +757,8 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         except ValueError:
             return None
 
-    # Pattern 17: DD日 時刻 (e.g., "19日 17時" - month omitted)
-    match = re.match(r"(\d{1,2})日\s+(.+)", text)
+    # Pattern 17: DD日 時刻 (e.g., "19日 17時", "19日17時" - month omitted)
+    match = re.match(r"(\d{1,2})日\s*(.+)", text)
     if match:
         day = int(match.group(1))
         time_part = match.group(2)

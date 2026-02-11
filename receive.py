@@ -33,6 +33,7 @@ from time_parser import (
     create_main_menu_quick_reply,
     create_delete_quick_reply,
     get_current_time,
+    log_parse_error,
 )
 from session import (
     get_user_session,
@@ -414,6 +415,9 @@ def handle_text_message(event: MessageEvent):
                 clear_user_session(user_id)
             else:
                 # Failed to parse time (could be invalid format or past time)
+                # Log the parse error for analysis
+                log_parse_error(user_id, received_text)
+
                 fail_count = increment_fail_count(user_id)
 
                 if fail_count >= MAX_FAIL_COUNT:

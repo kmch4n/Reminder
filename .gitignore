@@ -132,6 +132,7 @@ data/archive.json
 data/settings.json
 data/last_notifications.json
 *.log
+logs/
 .DS_Store
 
 # Other
