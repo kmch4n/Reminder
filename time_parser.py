@@ -900,7 +900,7 @@ def create_edit_quick_reply(reminder_count: int) -> QuickReply:
     display_count = min(reminder_count, 10)
     for i in range(1, display_count + 1):
         items.append(
-            QuickReplyItem(action=MessageAction(label=f"{i}を編集", text=f"{i}"))
+            QuickReplyItem(action=MessageAction(label=f"{i}を編集", text=f"{i}を編集"))
         )
 
     # Add cancel button
@@ -949,7 +949,7 @@ def create_delete_quick_reply(reminder_count: int) -> QuickReply:
     display_count = min(reminder_count, 10)
     for i in range(1, display_count + 1):
         items.append(
-            QuickReplyItem(action=MessageAction(label=f"{i}を削除", text=f"{i}"))
+            QuickReplyItem(action=MessageAction(label=f"{i}を削除", text=f"{i}を削除"))
         )
 
     # Add "delete all" button

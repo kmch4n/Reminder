@@ -493,9 +493,13 @@ def handle_text_message(event: MessageEvent):
             # User is sending delete ID
             reminders = session.get("reminders", [])
 
-            # Try to parse as number
+            # Try to parse as number: accept "Nを削除" format or plain number
             try:
-                delete_index = int(received_text) - 1
+                delete_match = re.match(r"(\d+)を削除$", received_text)
+                if delete_match:
+                    delete_index = int(delete_match.group(1)) - 1
+                else:
+                    delete_index = int(received_text) - 1
 
                 if 0 <= delete_index < len(reminders):
                     # Delete the reminder
@@ -599,7 +603,12 @@ def handle_text_message(event: MessageEvent):
             reminders = session.get("reminders", [])
 
             try:
-                edit_index = int(received_text) - 1
+                # Accept both "Nを編集" format (from quick reply) and plain number
+                edit_match = re.match(r"(\d+)を編集$", received_text)
+                if edit_match:
+                    edit_index = int(edit_match.group(1)) - 1
+                else:
+                    edit_index = int(received_text) - 1
 
                 if 0 <= edit_index < len(reminders):
                     selected_reminder = reminders[edit_index]
