@@ -128,6 +128,60 @@ def get_weekday_number(weekday_text: str) -> Optional[int]:
     return weekday_map.get(weekday_text)
 
 
+KANJI_DIGIT_MAP = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+
+def parse_day_count(day_text: str) -> Optional[int]:
+    """Parse ASCII or simple kanji numbers used in relative day expressions."""
+    normalized = day_text.strip()
+    if not normalized:
+        return None
+
+    if normalized.isdigit():
+        return int(normalized)
+
+    if normalized in {"零", "〇"}:
+        return 0
+
+    match = re.fullmatch(
+        r"(?:(?P<hundreds>[一二三四五六七八九])?百)?"
+        r"(?:(?P<tens>[一二三四五六七八九])?十)?"
+        r"(?P<ones>[一二三四五六七八九])?",
+        normalized,
+    )
+    if match is None:
+        return None
+
+    if not any(match.group(name) is not None for name in ("hundreds", "tens", "ones")):
+        return None
+
+    total = 0
+    if "百" in normalized:
+        hundreds_digit = match.group("hundreds")
+        total += (KANJI_DIGIT_MAP[hundreds_digit] if hundreds_digit else 1) * 100
+    if "十" in normalized:
+        tens_digit = match.group("tens")
+        total += (KANJI_DIGIT_MAP[tens_digit] if tens_digit else 1) * 10
+
+    ones_digit = match.group("ones")
+    if ones_digit:
+        total += KANJI_DIGIT_MAP[ones_digit]
+
+    return total
+
+
 # ============================================================================
 # Natural Language Time Parsing
 # ============================================================================
@@ -142,7 +196,7 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     - 今日の22:00, 今日23:59
     - 明日の9:00, 明日午後3時
     - 明後日の午前9時
-    - 10分後, 2時間後, 3日後
+    - 10分後, 2時間後, 3日後, 一日後
     - 来週火曜日の21時
     - 毎週日曜日 20時
     - 毎月1日 20時
@@ -220,44 +274,36 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = target_time.strftime("%Y年%m月%d日 %H:%M")
         return (schedule, desc)
 
-    # Pattern 0c: N日後 HH:MM (relative days with time)
-    match = re.match(r"(\d+)日後\s*(.+)", text)
+    # Pattern 0c/0d: N日後 / 一日後 (relative days with optional time)
+    match = re.match(
+        r"^([0-9一二三四五六七八九十百零〇]+)日後(?:\s*(.+))?$",
+        text,
+    )
     if match:
-        days = int(match.group(1))
-        time_part = match.group(2)
-
+        days = parse_day_count(match.group(1))
+        if days is None:
+            return None
         if days <= 0 or days > 365:
             return None
 
-        time_tuple = parse_time_with_ampm(time_part)
-        if time_tuple is None:
-            return None
-
-        hour, minute = time_tuple
         target_time = now + timedelta(days=days)
+        time_part = match.group(2)
+
+        if time_part:
+            time_tuple = parse_time_with_ampm(time_part)
+            if time_tuple is None:
+                return None
+
+            hour, minute = time_tuple
+        else:
+            hour, minute = DEFAULT_HOUR, DEFAULT_MINUTE
+
         target_time = target_time.replace(
             hour=hour, minute=minute, second=0, microsecond=0
         )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
         desc = target_time.strftime("%Y年%m月%d日 %H:%M")
-        return (schedule, desc)
-
-    # Pattern 0d: N日後 (relative days, default time)
-    match = re.match(r"(\d+)日後$", text)
-    if match:
-        days = int(match.group(1))
-
-        if days <= 0 or days > 365:
-            return None
-
-        target_time = now + timedelta(days=days)
-        target_time = target_time.replace(
-            hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
-        )
-
-        schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
 
     # Pattern 1a: 毎日 時刻 (recurring daily)
