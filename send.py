@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from notification_history import set_last_notification
+from reminder.notification_history import set_last_notification
 
 # Load environment variables
 try:

@@ -26,8 +26,8 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 # Import local modules
-from storage import add_reminder_to_file
-from time_parser import (
+from reminder.storage import add_reminder_to_file
+from reminder.time_parser import (
     parse_natural_time,
     calculate_initial_run_at,
     create_time_quick_reply,
@@ -38,7 +38,7 @@ from time_parser import (
     get_current_time,
     log_parse_error,
 )
-from session import (
+from reminder.session import (
     get_user_session,
     clear_user_session,
     start_waiting_for_time_session,
@@ -51,7 +51,7 @@ from session import (
     increment_fail_count,
     MAX_FAIL_COUNT,
 )
-from helpers import (
+from reminder.helpers import (
     create_reminder_object,
     format_reminder_list,
     create_reminder_list_flex,
@@ -62,7 +62,7 @@ from helpers import (
     delete_all_reminders,
     update_reminder_by_id,
 )
-from notification_history import (
+from reminder.notification_history import (
     get_last_notification,
     set_last_notification,
 )

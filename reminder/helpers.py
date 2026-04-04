@@ -6,8 +6,8 @@ import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from storage import load_reminders_from_file
-from time_parser import calculate_initial_run_at, get_current_time
+from reminder.storage import load_reminders_from_file
+from reminder.time_parser import calculate_initial_run_at, get_current_time
 
 
 # ============================================================================
@@ -616,7 +616,7 @@ def update_reminder_by_id(reminder_id: str, updates: Dict[str, Any]) -> bool:
     for reminder in reminders:
         if reminder.get("id") == reminder_id:
             reminder.update(updates)
-            from storage import save_reminders_to_file
+            from reminder.storage import save_reminders_to_file
 
             save_reminders_to_file(reminders)
             return True
@@ -697,7 +697,7 @@ def delete_reminder_by_id(reminder_id: str) -> bool:
     reminders = [r for r in reminders if r.get("id") != reminder_id]
 
     if len(reminders) < original_count:
-        from storage import save_reminders_to_file
+        from reminder.storage import save_reminders_to_file
 
         save_reminders_to_file(reminders)
         return True
@@ -727,7 +727,7 @@ def delete_all_reminders(user_id: str) -> int:
     deleted_count = original_count - len(reminders)
 
     if deleted_count > 0:
-        from storage import save_reminders_to_file
+        from reminder.storage import save_reminders_to_file
 
         save_reminders_to_file(reminders)
 
