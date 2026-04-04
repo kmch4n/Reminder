@@ -33,11 +33,14 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 ```python
 def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     text = text.strip()
-    now = get_current_time()  # Asia/Tokyo タイムゾーンの現在時刻
+    now = get_current_time()  # configured timezone の現在時刻
 
     # 内部ヘルパー関数の定義
     def parse_time_with_ampm(time_text: str) -> Tuple[int, int]:
         # ... (後述)
+
+    # 相対日数の解釈（"1日後" / "一日後" など）
+    days = parse_day_count(day_text)
 
     # Pattern 0a: N分後
     match = re.match(r"(\d+)分後", text)
@@ -49,13 +52,22 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
     if match:
         # ... 処理
 
-    # Pattern 0c-13: その他のパターン
+    # Pattern 0c-17: その他のパターン
     # ...
 
     return None  # どのパターンにもマッチしなかった場合
 ```
 
-パターンマッチングは**上から順に試行**され、最初にマッチしたパターンで処理が確定します。そのため、より具体的なパターン（「N日後 HH:MM」）を、より一般的なパターン（「N日後」）よりも先に配置しています。
+パターンマッチングは**上から順に試行**され、最初にマッチしたパターンで処理が確定します。現行実装では、主に次のカテゴリ順で評価しています。
+
+1. 相対時間（`10分後`、`2時間後`、`3日後`、`一日後14時`）
+2. 繰り返し（`毎日`、`全曜日`、`毎週`、`毎月`）
+3. 週相対（`来週火曜 21時`、`今週金曜 18時`）
+4. 今日・明日・明後日（時刻あり / 時刻なし）
+5. 時刻のみ
+6. 日付指定（`YYYY-MM-DD`、`MM/DD`、`M月D日`、`YYYY年M月D日`、`DD日`）
+
+この順序により、短い入力や曖昧な入力が後段に回り、より具体的なパターンが先に確定するようになっています。
 
 ## 内部ヘルパー関数：parse_time_with_ampm
 
@@ -178,26 +190,31 @@ if match:
 
 Pattern 0a と同様の構造ですが、`timedelta(hours=hours)` を使用しています。最大値は168時間（7日間）です。
 
-### Pattern 0c: N日後 HH:MM（相対日数 + 時刻指定）
+### Pattern 0c: N日後 / 一日後（相対日数、時刻指定は任意）
 
 ```python
-match = re.match(r"(\d+)日後\s+(.+)", text)
+match = re.match(
+    r"^([0-9一二三四五六七八九十百零〇]+)日後(?:\s*(.+))?$",
+    text,
+)
 if match:
-    days = int(match.group(1))
+    days = parse_day_count(match.group(1))
+
+    if days is None or days <= 0 or days > 365:
+        return None
+
+    target_time = now + timedelta(days=days)
     time_part = match.group(2)
 
-    if days <= 0 or days > 365:
-        return None
+    if time_part:
+        time_tuple = parse_time_with_ampm(time_part)
+        if time_tuple is None:
+            return None
+        hour, minute = time_tuple
+    else:
+        hour, minute = DEFAULT_HOUR, DEFAULT_MINUTE
 
-    time_tuple = parse_time_with_ampm(time_part)
-    if time_tuple is None:
-        return None
-
-    hour, minute = time_tuple
-    target_time = now + timedelta(days=days)
-    target_time = target_time.replace(
-        hour=hour, minute=minute, second=0, microsecond=0
-    )
+    target_time = target_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
     schedule = {"type": "once", "run_at": target_time.isoformat()}
     desc = target_time.strftime("%Y年%m月%d日 %H:%M")
@@ -205,33 +222,31 @@ if match:
 ```
 
 **ポイント**：
-- 正規表現 `\s+` で日数と時刻の間の空白を許容
-- `parse_time_with_ampm()` を使用して時刻部分をパース
-- `replace()` メソッドで時刻を上書き（秒・マイクロ秒は0にリセット）
+- 数字だけでなく `一日後`、`十日後`、`三百六十五日後` のような漢数字にも対応
+- 時刻指定がない場合は `DEFAULT_TIME` から解釈した時刻を使用
+- 時刻部分は `parse_time_with_ampm()` で処理するため、`一日後14時` と `一日後 午後3時` の両方が有効
 
-### Pattern 0d: N日後（時刻なし、デフォルト9:00）
+### Pattern 1a: 毎日 時刻 / 全曜日 時刻（日次繰り返し）
 
 ```python
-match = re.match(r"(\d+)日後$", text)
+match = re.match(r"毎日\s*(.+)", text)
 if match:
-    days = int(match.group(1))
+    ...
+    schedule = {"type": "daily", "time": time_str}
+    desc = f"毎日 {time_str}"
+    return (schedule, desc)
 
-    if days <= 0 or days > 365:
-        return None
-
-    target_time = now + timedelta(days=days)
-    target_time = target_time.replace(hour=9, minute=0, second=0, microsecond=0)
-
-    schedule = {"type": "once", "run_at": target_time.isoformat()}
-    desc = target_time.strftime("%Y年%m月%d日 09:00")
+match = re.match(r"全曜日\s*(.+)", text)
+if match:
+    ...
+    schedule = {"type": "daily", "time": time_str}
+    desc = f"毎日 {time_str}"
     return (schedule, desc)
 ```
 
-**注意点**：
-- 正規表現末尾の `$` により、「3日後」のみにマッチ（「3日後 14:00」は Pattern 0c でマッチ）
-- デフォルト時刻は9:00に固定
+`全曜日` は内部的に `毎日` と同じ `daily` スケジュールとして扱います。
 
-### Pattern 1: 毎週 曜日 時刻（週次繰り返し）
+### Pattern 1b: 毎週 曜日 時刻（週次繰り返し）
 
 ```python
 match = re.match(r"毎週\s*([月火水木金土日]曜?日?)\s*(.+)", text)
@@ -349,6 +364,28 @@ if match:
 - 例：今日が月曜日で「来週月曜」と指定 → 7日後
 - `strftime("%a")` で英語の曜日名を取得し、`replace()` で日本語に変換
 
+### Pattern 3a: 今週○曜日 時刻
+
+`今週` パターンは、同じ週の曜日を優先しつつ、すでに時刻が過ぎている場合のみ翌週へ送る実装です。
+
+```python
+match = re.match(r"今週\s*([月火水木金土日]曜?日?)\s*(.+)", text)
+if match:
+    ...
+    days_ahead = weekday - current_weekday
+
+    if days_ahead < 0:
+        days_ahead += 7
+    elif days_ahead == 0:
+        target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target_time <= now:
+            days_ahead = 7
+```
+
+**挙動の違い**：
+- `来週月曜` は常に 1 週間以上先
+- `今週月曜` は、まだ来ていなければ今週、過ぎていれば翌週
+
 ### Pattern 4: 明後日 時刻
 
 ```python
@@ -430,6 +467,20 @@ if match:
 - 過ぎている場合は `timedelta(days=1)` で翌日に自動調整
 - 例：現在時刻が15:00で「今日14:00」と指定 → 明日14:00に調整
 
+### Pattern 4a-6a: 明後日 / 明日 / 今日（時刻なし）
+
+時刻を省略した `明後日`、`明日`、`今日` は、`DEFAULT_TIME` から決まる時刻を使って `once` スケジュールを生成します。
+
+```python
+if text == "明日":
+    target_time = now + timedelta(days=1)
+    target_time = target_time.replace(
+        hour=DEFAULT_HOUR, minute=DEFAULT_MINUTE, second=0, microsecond=0
+    )
+```
+
+`今日` だけは、その既定時刻がすでに過ぎている場合に翌日に送ります。
+
 ### Pattern 7: 時刻のみ（HH:MM, HH時, 午後3時など）
 
 ```python
@@ -465,9 +516,11 @@ if match:
     day = int(match.group(3))
 
     try:
-        target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+        target_time = datetime(
+            year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+        )
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
     except ValueError:
         return None
@@ -475,7 +528,7 @@ if match:
 
 **ポイント**：
 - ISO 8601形式（`YYYY-MM-DD`）の日付をパース
-- 時刻は9:00に固定
+- 時刻は `DEFAULT_TIME` から決定
 - `datetime()` コンストラクタで `ValueError` が発生した場合（無効な日付）は `None` を返す
 
 ### Pattern 9: 日付のみ MM/DD
@@ -489,12 +542,16 @@ if match:
 
     # If the date has passed this year, use next year
     try:
-        target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+        target_time = datetime(
+            year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+        )
         if target_time <= now:
-            target_time = datetime(year + 1, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year + 1, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
     except ValueError:
         return None
@@ -516,12 +573,16 @@ if match:
 
     # If the date has passed this year, use next year
     try:
-        target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+        target_time = datetime(
+            year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+        )
         if target_time <= now:
-            target_time = datetime(year + 1, month, day, 9, 0, tzinfo=TZ)
+            target_time = datetime(
+                year + 1, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+            )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
     except ValueError:
         return None
@@ -544,14 +605,16 @@ if match:
         return None
 
     try:
-        target_time = datetime(year, month, day, 9, 0, tzinfo=TZ)
+        target_time = datetime(
+            year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
+        )
 
         # Check if time is in the past
         if is_past_time(target_time):
             return None
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime("%Y年%m月%d日 09:00")
+        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
         return (schedule, desc)
     except ValueError:
         return None
@@ -564,7 +627,7 @@ if match:
 ### Pattern 12: YYYY年M月D日 時刻付き
 
 ```python
-match = re.match(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s+(.+)", text)
+match = re.match(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s*(.+)", text)
 if match:
     year = int(match.group(1))
     month = int(match.group(2))
@@ -601,7 +664,7 @@ Pattern 11 と同様ですが、時刻部分を `parse_time_with_ampm()` でパ�
 ### Pattern 13: YYYY-MM-DD HH:MM（ISO 8601形式 + 時刻）
 
 ```python
-match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{1,2})", text)
 if match:
     year = int(match.group(1))
     month = int(match.group(2))
@@ -635,7 +698,7 @@ if match:
 ### Pattern 14: MM/DD HH:MM（スラッシュ区切り + コロン時刻）
 
 ```python
-match = re.match(r"(\d{1,2})/(\d{1,2})\s+(\d{1,2}):(\d{1,2})", text)
+match = re.match(r"(\d{1,2})/(\d{1,2})\s*(\d{1,2}):(\d{1,2})", text)
 if match:
     month = int(match.group(1))
     day = int(match.group(2))
@@ -668,7 +731,7 @@ if match:
 ### Pattern 15: MM/DD 時刻（スラッシュ区切り + 日本語時刻）
 
 ```python
-match = re.match(r"(\d{1,2})/(\d{1,2})\s+(.+)", text)
+match = re.match(r"(\d{1,2})/(\d{1,2})\s*(.+)", text)
 if match:
     month = int(match.group(1))
     day = int(match.group(2))
@@ -706,18 +769,45 @@ if match:
 
 ### Pattern 16: MM月DD日 時刻（月日 + 日本語時刻）
 
-**注意**: このパターンは Pattern 10 と重複しているため、実際の実装ではコメントとして記載されています。
+現行実装では、`M月D日` の時刻付き入力は独立した分岐で処理しています。
 
 ```python
-# Pattern 16: MM月DD日 時刻 (e.g., "11月25日 18時", "11月25日 午後3時")
-# Note: This pattern is already handled by Pattern 10 above
+match = re.match(r"(\d{1,2})月(\d{1,2})日?\s*(.+)", text)
+if match:
+    month = int(match.group(1))
+    day = int(match.group(2))
+    time_part = match.group(3)
+    year = now.year
+
+    time_tuple = parse_time_with_ampm(time_part)
+    if time_tuple is None:
+        return None
+
+    hour, minute = time_tuple
+    ...
 ```
 
-Pattern 10 が `r"(\d{1,2})月(\d{1,2})日?\s*(.+)"` で時刻付きの形式も処理するため、明示的なパターン定義は不要です。
+**対応例**：
+- `11月25日 18時`
+- `11月25日18時`
+- `12月31日 午後3時`
 
-**対応例（Pattern 10 で処理）**：
-- `11月25日 18時` → 2025年11月25日 18:00
-- `12月31日 午後3時` → 2025年12月31日 15:00
+### Pattern 17: DD日 時刻（月省略）
+
+月を省略して `19日 17時` のように送った場合は、現在月を基準に最も近い未来日時へ補完します。
+
+```python
+match = re.match(r"(\d{1,2})日\s*(.+)", text)
+if match:
+    day = int(match.group(1))
+    time_part = match.group(2)
+    ...
+```
+
+**補完ルール**：
+- まず今月で解釈を試みる
+- その日が今月に存在しなければ翌月へ進める
+- 今月の候補がすでに過去なら翌月へ送る
 
 ## 過去時刻の検出と調整
 
@@ -743,22 +833,38 @@ def is_past_time(target_time: datetime) -> bool:
 | パターン | 過去時刻の扱い |
 |---------|---------------|
 | 今日 時刻 | 翌日に自動調整 |
+| 今日（時刻なし） | 既定時刻が過ぎていれば翌日に自動調整 |
 | 時刻のみ | 翌日に自動調整 |
 | MM/DD | 翌年に自動調整 |
 | M月D日 | 翌年に自動調整 |
+| DD日 時刻 | 未来の月へ自動調整 |
 | YYYY年M月D日 | エラー（`None` を返す） |
+| YYYY年M月D日 時刻付き | エラー（`None` を返す） |
 | YYYY-MM-DD HH:MM | エラー（`None` を返す） |
 
 明示的に年が指定されている場合は、ユーザーの意図を尊重し、過去の日時であればエラーとして扱います。
 
+## 設定値
+
+既定時刻とタイムゾーンは、コード内に固定されているわけではなく環境変数から読み取られます。
+
+```python
+TIMEZONE = os.getenv("REMINDER_TIMEZONE", "Asia/Tokyo")
+DEFAULT_TIME = os.getenv("REMINDER_DEFAULT_TIME", "09:00")
+```
+
+- `REMINDER_TIMEZONE` を未設定の場合は `Asia/Tokyo`
+- `REMINDER_DEFAULT_TIME` を未設定の場合は `09:00`
+- 不正な時刻文字列が与えられた場合も、フォールバックとして `09:00` を使用
+
 ## タイムゾーン処理
 
-すべての日時計算は、`zoneinfo.ZoneInfo` を使用して **Asia/Tokyo (JST, UTC+9)** タイムゾーンで行われます：
+すべての日時計算は、`zoneinfo.ZoneInfo` を使用して **設定されたタイムゾーン** で行われます。デフォルトは `Asia/Tokyo (JST, UTC+9)` です。
 
 ```python
 from zoneinfo import ZoneInfo
 
-TZ = ZoneInfo("Asia/Tokyo")
+TZ = ZoneInfo(TIMEZONE)
 
 def get_current_time() -> datetime:
     """Get current time in configured timezone."""
@@ -780,8 +886,10 @@ print(target_time.isoformat())
 ```python
 (
     {
-        "type": "once",  # または "weekly", "monthly"
+        "type": "once",  # または "daily", "weekly", "monthly"
         "run_at": "2025-11-20T21:00:00+09:00"  # type="once" の場合
+        # または
+        "time": "09:00"  # type="daily" の場合
         # または
         "weekday": 0,  # type="weekly" の場合（0=月曜、6=日曜）
         "time": "21:00"
@@ -799,9 +907,9 @@ print(target_time.isoformat())
 
 1. **パターンマッチングの順序**: より具体的なパターンを先に配置
 2. **内部ヘルパー関数の活用**: `parse_time_with_ampm()` で時刻パース処理を集約
-3. **時刻バリデーション**: 0-23時、0-59分の範囲チェック
-4. **過去時刻の自動調整**: パターンに応じて柔軟に対応
-5. **タイムゾーン対応**: `zoneinfo` を使用した正確な時刻計算
+3. **相対日数の共通処理**: `parse_day_count()` により `1日後` と `一日後` を統一的に解釈
+4. **設定値の外出し**: 既定時刻とタイムゾーンを環境変数で調整可能
+5. **過去時刻の自動調整**: パターンに応じて柔軟に対応
 6. **エラーハンドリング**: 範囲チェックと `ValueError` のキャッチ
 
-この実装により、「明日9時」「毎週月曜20時」「2025年5月3日 14:00」「11/24 18時」など、16種類以上の自然言語表現に対応した柔軟なパーサーを実現しました。
+この実装により、「一日後」「毎日 9時」「今週金曜 18時」「19日 17時」「2025年5月3日 14:00」など、複数の自然言語表現に対応した柔軟なパーサーを実現しました。
