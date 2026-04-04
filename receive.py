@@ -93,7 +93,6 @@ if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
 
 SNOOZE_KEYWORDS = ("リマインド", "スヌーズ", "もう一度")
 MAX_SNOOZE_MINUTES = 24 * 60
-SNOOZE_HISTORY_EXPIRY_MINUTES = 120
 
 
 def load_settings():
@@ -165,18 +164,7 @@ def handle_snooze_request(user_id: str, snooze_delta: timedelta) -> tuple[str, O
     if not reminder_text:
         return ("再通知できるリマインダーがありません。", quick_reply)
 
-    sent_at_str = last_notification.get("sent_at")
-    sent_at = None
-    if sent_at_str:
-        try:
-            sent_at = datetime.fromisoformat(sent_at_str)
-        except ValueError:
-            sent_at = None
-
     now = get_current_time()
-    if sent_at and now - sent_at > timedelta(minutes=SNOOZE_HISTORY_EXPIRY_MINUTES):
-        return ("最新のリマインダーから時間が経過したため、スヌーズできません。", quick_reply)
-
     snooze_run_at = now + snooze_delta
     schedule = {"type": "once", "run_at": snooze_run_at.isoformat()}
 
