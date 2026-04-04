@@ -37,10 +37,9 @@ line_bot_api.mark_messages_as_read_by_token(
     )
 )
 ```
-:::note warn
+
 この機能を利用するには、**line-bot-sdk-python 3.21.0 以上** が必要です。
 同バージョンは 2025年11月初旬にリリース されています。
-:::
 
 ## おわりに
 LINE Bot における既読機能は、以前は申請を行った法人アカウントでのみ利用可能でした。
