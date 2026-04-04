@@ -122,9 +122,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Claude files
+# AI
 .claude/
-CLAUDE.md
+.codex/
 
 # Project-specific
 data/reminders.json
