@@ -353,8 +353,8 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         desc = f"毎週{weekday_text} {time_str}"
         return (schedule, desc)
 
-    # Pattern 2: 毎月 DD日 時刻 (recurring monthly)
-    match = re.match(r"毎月\s*(\d{1,2})日?\s*(.+)", text)
+    # Pattern 2: 毎月 DD日 [時刻] (recurring monthly; time optional, falls back to DEFAULT_TIME)
+    match = re.match(r"毎月\s*(\d{1,2})日?(?:\s*(.+))?$", text)
     if match:
         day = int(match.group(1))
         time_part = match.group(2)
@@ -362,11 +362,14 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         if not 1 <= day <= 31:
             return None
 
-        time_tuple = parse_time_with_ampm(time_part)
-        if time_tuple is None:
-            return None
+        if time_part:
+            time_tuple = parse_time_with_ampm(time_part)
+            if time_tuple is None:
+                return None
+            hour, minute = time_tuple
+        else:
+            hour, minute = DEFAULT_HOUR, DEFAULT_MINUTE
 
-        hour, minute = time_tuple
         time_str = f"{hour:02d}:{minute:02d}"
 
         schedule = {"type": "monthly", "day": day, "time": time_str}
