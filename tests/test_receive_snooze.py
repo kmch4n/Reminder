@@ -4,10 +4,39 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from linebot.v3.messaging.exceptions import ApiException
+
 os.environ.setdefault("LINE_CHANNEL_ACCESS_TOKEN", "dummy-token")
 os.environ.setdefault("LINE_CHANNEL_SECRET", "dummy-secret")
 
 import receive
+from reminder.session import clear_user_session
+
+
+def build_text_event(
+    webhook_event_id: str,
+    *,
+    timestamp: int = 1_800_000_000_000,
+    is_redelivery: bool = False,
+) -> receive.MessageEvent:
+    """Build a complete LINE text event for webhook behavior tests."""
+    return receive.MessageEvent.from_dict(
+        {
+            "type": "message",
+            "source": {"type": "user", "userId": "test-user"},
+            "timestamp": timestamp,
+            "mode": "active",
+            "webhookEventId": webhook_event_id,
+            "deliveryContext": {"isRedelivery": is_redelivery},
+            "replyToken": "test-reply-token",
+            "message": {
+                "id": "test-message-id",
+                "type": "text",
+                "quoteToken": "test-quote-token",
+                "text": "リマインド一覧",
+            },
+        }
+    )
 
 
 class HandleSnoozeRequestTests(unittest.TestCase):
@@ -90,6 +119,69 @@ class HandleSnoozeRequestTests(unittest.TestCase):
 
         self.assertEqual(reply_text, "直近のリマインダーが見つかりませんでした。")
         self.assertIs(quick_reply, self.quick_reply)
+
+
+class WebhookRedeliveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        clear_user_session("test-user")
+
+    def tearDown(self) -> None:
+        clear_user_session("test-user")
+
+    def test_duplicate_webhook_event_is_processed_only_once(self) -> None:
+        event = build_text_event("duplicate-event")
+
+        with patch.object(
+            receive,
+            "create_reminder_list_flex",
+            return_value=None,
+        ), patch.object(receive.MessagingApi, "reply_message") as reply_message:
+            receive.handle_text_message(event)
+            receive.handle_text_message(event)
+
+        self.assertEqual(reply_message.call_count, 1)
+
+    def test_stale_redelivery_is_ignored(self) -> None:
+        event = build_text_event(
+            "stale-redelivery",
+            timestamp=1,
+            is_redelivery=True,
+        )
+
+        with patch.object(
+            receive,
+            "create_reminder_list_flex",
+            return_value=None,
+        ), patch.object(receive.MessagingApi, "reply_message") as reply_message:
+            receive.handle_text_message(event)
+
+        reply_message.assert_not_called()
+
+    def test_invalid_reply_token_does_not_trigger_webhook_redelivery(self) -> None:
+        class InvalidReplyTokenResponse:
+            status = 400
+            reason = "Bad Request"
+            data = '{"message":"Invalid reply token"}'
+
+            @staticmethod
+            def getheaders() -> dict[str, str]:
+                return {}
+
+        error = ApiException(http_resp=InvalidReplyTokenResponse())
+
+        with receive.app.test_client() as cl, patch.object(
+            receive.handler,
+            "handle",
+            side_effect=error,
+        ):
+            response = cl.post(
+                "/reminder/callback",
+                data="{}",
+                headers={"X-Line-Signature": "test-signature"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_data(as_text=True), "OK")
 
 
 if __name__ == "__main__":

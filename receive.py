@@ -23,6 +23,7 @@ from linebot.v3.messaging import (
     FlexMessage,
     FlexContainer,
 )
+from linebot.v3.messaging.exceptions import ApiException
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
 # Import local modules
@@ -66,6 +67,7 @@ from reminder.notification_history import (
     get_last_notification,
     set_last_notification,
 )
+from reminder.webhook_events import WebhookEventGuard
 
 # Load environment variables
 try:
@@ -152,7 +154,9 @@ def format_display_time(dt: datetime) -> str:
     return dt.strftime("%Y年%m月%d日 %H:%M")
 
 
-def handle_snooze_request(user_id: str, snooze_delta: timedelta) -> tuple[str, Optional[Any]]:
+def handle_snooze_request(
+    user_id: str, snooze_delta: timedelta
+) -> tuple[str, Optional[Any]]:
     """Add a snoozed reminder based on the user's last notification."""
     quick_reply = create_main_menu_quick_reply()
 
@@ -197,6 +201,7 @@ app = Flask(__name__)
 # Initialize LINE bot SDK
 configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+webhook_event_guard = WebhookEventGuard()
 
 
 # ============================================================================
@@ -218,6 +223,11 @@ def callback():
     except InvalidSignatureError:
         app.logger.error("Invalid signature")
         abort(400)
+    except ApiException as exc:
+        if exc.status == 400 and "Invalid reply token" in str(exc.body):
+            app.logger.warning("Ignoring an expired or already used reply token")
+            return "OK"
+        raise
 
     return "OK"
 
@@ -231,6 +241,15 @@ def handle_text_message(event: MessageEvent):
     1. User sends reminder message → Bot asks for time
     2. User sends time → Bot creates reminder
     """
+    delivery_context = event.delivery_context
+    if not webhook_event_guard.should_process(
+        event.webhook_event_id,
+        event.timestamp,
+        delivery_context.is_redelivery,
+    ):
+        app.logger.warning("Ignoring a stale or duplicate webhook event")
+        return
+
     received_text = event.message.text.strip()
     user_id = event.source.user_id
 
@@ -372,9 +391,7 @@ def handle_text_message(event: MessageEvent):
             line_bot_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[
-                        TextMessage(text=reply_text, quick_reply=quick_reply)
-                    ],
+                    messages=[TextMessage(text=reply_text, quick_reply=quick_reply)],
                 )
             )
         return
@@ -662,8 +679,7 @@ def handle_text_message(event: MessageEvent):
             start_waiting_for_edit_text_session(user_id, reminder)
             current_text = reminder.get("text", "")
             reply_text = (
-                f"新しい内容を入力してください。\n\n"
-                f"現在の内容: 「{current_text}」"
+                f"新しい内容を入力してください。\n\n" f"現在の内容: 「{current_text}」"
             )
             quick_reply = None
         elif received_text == "時刻を編集":
@@ -676,8 +692,7 @@ def handle_text_message(event: MessageEvent):
                 current_time_str = "不明"
 
             reply_text = (
-                f"新しい時刻を入力してください。\n\n"
-                f"現在の時刻: {current_time_str}"
+                f"新しい時刻を入力してください。\n\n" f"現在の時刻: {current_time_str}"
             )
             quick_reply = create_time_quick_reply()
         else:
@@ -709,7 +724,9 @@ def handle_text_message(event: MessageEvent):
             new_text = received_text.strip()
 
             if update_reminder_by_id(reminder_id, {"text": new_text}):
-                reply_text = f"✅ リマインダーの内容を更新しました。\n\n内容: 「{new_text}」"
+                reply_text = (
+                    f"✅ リマインダーの内容を更新しました。\n\n内容: 「{new_text}」"
+                )
             else:
                 reply_text = "❌ リマインダーの更新に失敗しました。"
 
