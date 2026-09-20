@@ -222,28 +222,39 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
                 return None
             return (hour, minute)
 
-        # 午後3時30分, 午前9時
-        match = re.match(r"午後\s*(\d{1,2})時?(\d{0,2})分?", time_text)
-        if match:
-            hour = int(match.group(1))
-            minute = int(match.group(2)) if match.group(2) else 0
-            if hour != 12:
-                hour += 12
-            return validate(hour, minute)
+        normalized = time_text.strip()
+        normalized = re.sub(r"^の\s*", "", normalized)
+        normalized = re.sub(r"(?<=\d)字", "時", normalized)
+        normalized = re.sub(r"\s*(?:に|ごろ|頃|くらい)\s*$", "", normalized)
 
-        match = re.match(r"午前\s*(\d{1,2})時?(\d{0,2})分?", time_text)
-        if match:
-            hour = int(match.group(1))
-            minute = int(match.group(2)) if match.group(2) else 0
-            if hour == 12:
+        ampm_match = re.fullmatch(
+            r"(午前|午後)\s*(\d{1,2})"
+            r"(?:(?:時(?:(\d{1,2})分?|(半))?)|(?::(\d{1,2})))?",
+            normalized,
+        )
+        if ampm_match:
+            period = ampm_match.group(1)
+            hour = int(ampm_match.group(2))
+            if not 0 <= hour <= 12:
+                return None
+
+            minute_text = ampm_match.group(3) or ampm_match.group(5)
+            minute = 30 if ampm_match.group(4) else int(minute_text or 0)
+
+            if period == "午後" and hour != 12:
+                hour += 12
+            elif period == "午前" and hour == 12:
                 hour = 0
             return validate(hour, minute)
 
-        # Regular HH:MM or HH時MM分
-        match = re.match(r"(\d{1,2})[時:](\d{0,2})分?", time_text)
-        if match:
-            hour = int(match.group(1))
-            minute = int(match.group(2)) if match.group(2) else 0
+        regular_match = re.fullmatch(
+            r"(\d{1,2})(?:時(?:(\d{1,2})分?|(半))?|:(\d{1,2}))",
+            normalized,
+        )
+        if regular_match:
+            hour = int(regular_match.group(1))
+            minute_text = regular_match.group(2) or regular_match.group(4)
+            minute = 30 if regular_match.group(3) else int(minute_text or 0)
             return validate(hour, minute)
 
         return None
@@ -374,6 +385,38 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
 
         schedule = {"type": "monthly", "day": day, "time": time_str}
         desc = f"毎月{day}日 {time_str}"
+        return (schedule, desc)
+
+    # Pattern 2a: 曜日 時刻 (next occurrence, one-time)
+    match = re.match(r"^([月火水木金土日]曜?日?)\s*(?:の\s*)?(.+)$", text)
+    if match:
+        weekday_text = match.group(1)
+        time_tuple = parse_time_with_ampm(match.group(2))
+        weekday = get_weekday_number(weekday_text)
+
+        if weekday is None or time_tuple is None:
+            return None
+
+        hour, minute = time_tuple
+        days_ahead = (weekday - now.weekday()) % 7
+        target_time = now + timedelta(days=days_ahead)
+        target_time = target_time.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if target_time <= now:
+            target_time += timedelta(days=7)
+
+        schedule = {"type": "once", "run_at": target_time.isoformat()}
+        desc = (
+            target_time.strftime("%Y年%m月%d日(%a) %H:%M")
+            .replace("Mon", "月")
+            .replace("Tue", "火")
+            .replace("Wed", "水")
+            .replace("Thu", "木")
+            .replace("Fri", "金")
+            .replace("Sat", "土")
+            .replace("Sun", "日")
+        )
         return (schedule, desc)
 
     # Pattern 3: 来週○曜日 時刻
@@ -530,7 +573,9 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        desc = target_time.strftime(
+            f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+        )
         return (schedule, desc)
 
     # Pattern 5a: 明日のみ (時刻なし、デフォルト時刻を使用)
@@ -541,7 +586,9 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         )
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        desc = target_time.strftime(
+            f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+        )
         return (schedule, desc)
 
     # Pattern 6a: 今日のみ (時刻なし、デフォルト時刻を使用)
@@ -555,7 +602,9 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
             target_time += timedelta(days=1)
 
         schedule = {"type": "once", "run_at": target_time.isoformat()}
-        desc = target_time.strftime(f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}")
+        desc = target_time.strftime(
+            f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
+        )
         return (schedule, desc)
 
     # Pattern 7: 時刻のみ (HH:MM, HH時, 午後3時など) → 今日のその時刻
@@ -580,10 +629,15 @@ def parse_natural_time(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
         month = int(match.group(2))
         day = int(match.group(3))
 
+        if year > now.year + 5:
+            return None
+
         try:
             target_time = datetime(
                 year, month, day, DEFAULT_HOUR, DEFAULT_MINUTE, tzinfo=TZ
             )
+            if target_time < now:
+                return None
             schedule = {"type": "once", "run_at": target_time.isoformat()}
             desc = target_time.strftime(
                 f"%Y年%m月%d日 {DEFAULT_HOUR:02d}:{DEFAULT_MINUTE:02d}"
@@ -969,15 +1023,9 @@ def create_edit_choice_quick_reply() -> QuickReply:
     """
     return QuickReply(
         items=[
-            QuickReplyItem(
-                action=MessageAction(label="内容を編集", text="内容を編集")
-            ),
-            QuickReplyItem(
-                action=MessageAction(label="時刻を編集", text="時刻を編集")
-            ),
-            QuickReplyItem(
-                action=MessageAction(label="キャンセル", text="キャンセル")
-            ),
+            QuickReplyItem(action=MessageAction(label="内容を編集", text="内容を編集")),
+            QuickReplyItem(action=MessageAction(label="時刻を編集", text="時刻を編集")),
+            QuickReplyItem(action=MessageAction(label="キャンセル", text="キャンセル")),
         ]
     )
 
